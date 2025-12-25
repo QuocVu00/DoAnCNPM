@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Trò chuyện với cư dân{% endblock %}
+
+{% block content %}
+<h3 class="mb-3">Trò chuyện với cư dân</h3>
+
+<div class="row">
+  <!-- Danh sách cư dân -->
+  <div class="col-md-3 mb-3">
+    <div class="card h-100">
+      <div class="card-header">Danh sách cư dân</div>
+      <div class="list-group list-group-flush">
+        {% for r in residents %}
+        <a
+          href="{{ url_for('admin_chat', resident_id=r.id) }}"
+          class="list-group-item list-group-item-action {% if active_resident and active_resident.id == r.id %}active{% endif %}"
+        >
+          {{ r.full_name }}<br />
+          <small>Phòng {{ r.floor }}/{{ r.room }}</small>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Khung chat -->
+  <div class="col-md-9 mb-3">
+    <div class="card h-100">
+      <div class="card-header">
+        {% if active_resident %}
+          Trò chuyện với: <b>{{ active_resident.full_name }}</b>
+          <span class="text-muted">
+            (Phòng {{ active_resident.floor }}/{{ active_resident.room }})
+          </span>
+        {% else %}
+          Chưa chọn cư dân
+        {% endif %}
+      </div>
+      {% if active_resident %}
+      <div class="card-body d-flex flex-column">
+        <div
+          class="border rounded mb-3 p-2 flex-grow-1"
+          style="max-height: 400px; overflow-y: auto; background-color: #f8fafc;"
+        >
+          {% if messages %}
+            {% for m in messages %}
+              {% if m.sender == 'resident' %}
+                <div class="d-flex justify-content-start mb-2">
+                  <div class="bg-white border rounded-3 px-3 py-2">
+                    <div class="small">{{ m.content }}</div>
+                    <div class="small text-muted" style="font-size: 0.75rem;">
+                      {{ active_resident.full_name }} • {{ m.time }}
+                    </div>
+                  </div>
+                </div>
+              {% else %}
+                <div class="d-flex justify-content-end mb-2">
+                  <div class="bg-primary text-white rounded-3 px-3 py-2">
+                    <div class="small">{{ m.content }}</div>
+                    <div class="small text-light text-end" style="font-size: 0.75rem;">
+                      Admin • {{ m.time }}
+                    </div>
+                  </div>
+                </div>
+              {% endif %}
+            {% endfor %}
+          {% else %}
+            <div class="text-muted text-center small py-3">
+              Chưa có tin nhắn nào với cư dân này.
+            </div>
+          {% endif %}
+        </div>
+
+        <form method="post" action="{{ url_for('admin_chat_send') }}">
+          <input type="hidden" name="resident_id" value="{{ active_resident.id }}" />
+          <div class="mb-2">
+            <label class="form-label">Nội dung tin nhắn</label>
+            <textarea
+              name="content"
+              rows="2"
+              class="form-control"
+              placeholder="Nhập tin nhắn gửi cho cư dân..."
+              required
+            ></textarea>
+          </div>
+          <button class="btn btn-primary" type="submit">Gửi</button>
+        </form>
+      </div>
+      {% else %}
+      <div class="card-body">
+        <div class="text-muted">Hãy chọn một cư dân ở bên trái để bắt đầu trò chuyện.</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
