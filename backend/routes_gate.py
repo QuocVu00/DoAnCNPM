@@ -2,10 +2,8 @@ from flask import Blueprint, request, jsonify
 from datetime import datetime
 import random
 
-from config import Config
 from db import query_one, execute
 
-# Tạo blueprint cho nhóm API ở cổng bãi xe
 gate_bp = Blueprint("gate", __name__, url_prefix="/gate")
 
 
@@ -27,6 +25,8 @@ def calculate_fee(checkin_time: datetime, checkout_time: datetime) -> int:
     hours_rounded = int(hours) if hours.is_integer() else int(hours) + 1
     return hours_rounded * 5000  # 5k/giờ
 
+
+# =============== GUEST ===============
 
 @gate_bp.route("/guest/checkin", methods=["POST"])
 def guest_checkin():
@@ -111,6 +111,9 @@ def guest_checkout():
         "fee": fee
     })
 
+
+# =============== RESIDENT – BACKUP CODE ===============
+
 @gate_bp.route("/resident/backup-login", methods=["POST"])
 def resident_backup_login():
     """
@@ -152,4 +155,86 @@ def resident_backup_login():
         "full_name": resident["full_name"],
         "floor": resident["floor"],
         "room": resident["room"]
+    })
+
+
+# =============== RESIDENT – CHECKIN/CHECKOUT THƯỜNG ===============
+
+@gate_bp.route("/resident/checkin", methods=["POST"])
+def resident_checkin():
+    """
+    Cư dân vào bãi (nhận diện thành công).
+    Body JSON:
+    {
+      "resident_id": 1,
+      "plate": "59A12345"
+    }
+    """
+    data = request.get_json() or {}
+    resident_id = data.get("resident_id")
+    plate = data.get("plate")
+
+    if not resident_id:
+        return jsonify({"error": "resident_id is required"}), 400
+
+    # Kiểm tra cư dân có tồn tại & đang active
+    sql = "SELECT * FROM residents WHERE id = %s AND status = 'active'"
+    resident = query_one(sql, (resident_id,))
+    if not resident:
+        return jsonify({"error": "Resident not found or inactive"}), 404
+
+    now = datetime.now()
+
+    # Ghi log vào bảng parking_logs
+    log_sql = """
+        INSERT INTO parking_logs (event_time, event_type, user_type, resident_id, plate)
+        VALUES (%s, 'resident_in', 'resident', %s, %s)
+    """
+    execute(log_sql, (now, resident_id, plate))
+
+    return jsonify({
+        "message": "Resident checkin logged",
+        "resident_id": resident_id,
+        "full_name": resident["full_name"],
+        "plate": plate,
+        "event_time": now.isoformat()
+    })
+
+
+@gate_bp.route("/resident/checkout", methods=["POST"])
+def resident_checkout():
+    """
+    Cư dân ra khỏi bãi (không tính phí).
+    Body JSON:
+    {
+      "resident_id": 1,
+      "plate": "59A12345"
+    }
+    """
+    data = request.get_json() or {}
+    resident_id = data.get("resident_id")
+    plate = data.get("plate")
+
+    if not resident_id:
+        return jsonify({"error": "resident_id is required"}), 400
+
+    sql = "SELECT * FROM residents WHERE id = %s AND status = 'active'"
+    resident = query_one(sql, (resident_id,))
+    if not resident:
+        return jsonify({"error": "Resident not found or inactive"}), 404
+
+    now = datetime.now()
+
+    log_sql = """
+        INSERT INTO parking_logs (event_time, event_type, user_type, resident_id, plate)
+        VALUES (%s, 'resident_out', 'resident', %s, %s)
+    """
+    execute(log_sql, (now, resident_id, plate))
+
+    return jsonify({
+        "message": "Resident checkout logged",
+        "resident_id": resident_id,
+        "full_name": resident["full_name"],
+        "plate": plate,
+        "event_time": now.isoformat()
     })

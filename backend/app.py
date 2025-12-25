@@ -1,15 +1,14 @@
 from flask import Flask, jsonify
 from config import Config
 
-from routes_gate import gate_bp      # API cổng bãi xe
-from routes_admin import admin_bp    # API admin
+from routes_gate import gate_bp
+from routes_admin import admin_bp
 
 
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    # Đăng ký các blueprint
     app.register_blueprint(gate_bp)
     app.register_blueprint(admin_bp)
 
