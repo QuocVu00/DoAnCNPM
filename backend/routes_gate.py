@@ -2,9 +2,10 @@ from flask import Blueprint, request, jsonify
 from datetime import datetime
 import random
 
-from db import query_one, execute
+from .db import query_one, execute
+from backend.config import Config
 
-gate_bp = Blueprint("gate", __name__, url_prefix="/gate")
+gate_bp = Blueprint("gate", __name__, url_prefix="/api/gate")
 
 
 def generate_ticket_code():

@@ -2,10 +2,12 @@ from flask import Blueprint, request, jsonify
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from db import query_one, query_all, execute
+from .db import query_one, query_all, execute
+from backend.db import query_one, query_all, execute
 
 
-admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
+admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
+
 
 
 # =============== CƯ DÂN ===============

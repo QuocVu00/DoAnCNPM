@@ -43,9 +43,23 @@
       </div>
 
       <div class="card-body p-4">
-        {% if error %}
-        <div class="alert alert-danger mb-3">{{ error }}</div>
-        {% endif %}
+
+        {# Hiển thị các thông báo từ flash() trong app.py #}
+        {% with messages = get_flashed_messages(with_categories=True) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              {% set bs_class =
+                'danger' if category in ['error', 'danger'] else
+                'warning' if category == 'warning' else
+                'success' if category == 'success' else
+                'info'
+              %}
+              <div class="alert alert-{{ bs_class }} mb-3">
+                {{ message }}
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
 
         <form method="post" action="{{ url_for('login') }}">
           <div class="mb-3">

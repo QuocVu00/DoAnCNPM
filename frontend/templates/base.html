@@ -13,38 +13,73 @@
   {% block head %}{% endblock %}
 </head>
 <body class="bg-light">
+
+  {% set role = session.get('role') %}
+  {% if role in ['admin', 'staff'] %}
+    {% set brand_url = url_for('admin_home') %}
+  {% elif role == 'resident' %}
+    {% set brand_url = url_for('resident_dashboard') %}
+  {% else %}
+    {% set brand_url = url_for('login') %}
+  {% endif %}
+
   <nav class="navbar navbar-dark bg-dark mb-3">
     <div class="container-fluid">
-      <a class="navbar-brand" href="{{ url_for('login') }}">Smart Parking</a>
+      <a class="navbar-brand" href="{{ brand_url }}">Smart Parking</a>
 
       <div class="d-flex align-items-center gap-2">
-        {# === ADMIN NAV === #}
-        {% if session.get('role') == 'admin' %}
+        {% if role in ['admin', 'staff'] %}
           <span class="badge bg-primary">Admin</span>
-          <a href="{{ url_for('admin_residents') }}" class="btn btn-sm btn-outline-light">Cư dân</a>
-          <a href="{{ url_for('admin_guests') }}" class="btn btn-sm btn-outline-light">Khách ngoài</a>
-          <a href="{{ url_for('admin_report_page') }}" class="btn btn-sm btn-outline-light">Báo cáo</a>
-          <a href="{{ url_for('admin_chat') }}" class="btn btn-sm btn-outline-light">Trò chuyện</a>
-          <a href="{{ url_for('gate_page') }}" class="btn btn-sm btn-outline-warning">Cổng bãi xe</a>
 
-        {# === RESIDENT NAV === #}
-        {% elif session.get('role') == 'resident' %}
+          <a href="{{ url_for('admin_home') }}"
+             class="btn btn-sm btn-outline-light">
+            Trang chủ
+          </a>
+
+          <a href="{{ url_for('admin_residents') }}"
+             class="btn btn-sm btn-outline-light">
+            Quản lý cư dân
+          </a>
+
+          <a href="{{ url_for('admin_residents_list') }}"
+             class="btn btn-sm btn-outline-light">
+            Cư dân
+          </a>
+
+          <a href="{{ url_for('admin_guests') }}"
+             class="btn btn-sm btn-outline-light">
+            Khách ngoài
+          </a>
+
+          <a href="{{ url_for('admin_report_page') }}"
+             class="btn btn-sm btn-outline-light">
+            Báo cáo
+          </a>
+
+          <a href="{{ url_for('admin_chat') }}"
+             class="btn btn-sm btn-outline-light">
+            Trò chuyện
+          </a>
+
+        {% elif role == 'resident' %}
           <span class="badge bg-success">Cư dân</span>
-          <a href="{{ url_for('resident_dashboard') }}" class="btn btn-sm btn-outline-light">
+          <a href="{{ url_for('resident_dashboard') }}"
+             class="btn btn-sm btn-outline-light">
             Trang cư dân
           </a>
-          {# Nút mở khung chat bên phải #}
           <button
             class="btn btn-sm btn-outline-info"
             type="button"
-            id="openResidentChat"
-          >
+            id="openResidentChat">
             Trò chuyện
           </button>
         {% endif %}
 
-        {% if session.get('role') %}
-          <a href="{{ url_for('logout') }}" class="btn btn-sm btn-outline-light">Đăng xuất</a>
+        {% if role %}
+          <a href="{{ url_for('logout') }}"
+             class="btn btn-sm btn-outline-light">
+            Đăng xuất
+          </a>
         {% endif %}
       </div>
     </div>
@@ -58,7 +93,6 @@
   {% block scripts %}{% endblock %}
 
   <script>
-    // Toggle khung chat phải cho cư dân
     (function () {
       const openBtn = document.getElementById('openResidentChat');
       const chatPanel = document.getElementById('residentChatPanel');

@@ -11,22 +11,37 @@
     <form method="get" action="{{ url_for('admin_guests') }}" class="row g-3">
       <div class="col-md-3">
         <label class="form-label">Ngày</label>
-        <input type="date" name="date" class="form-control" value="{{ selected_date }}">
+        <input
+          type="date"
+          name="date"
+          class="form-control"
+          value="{{ selected_date }}"
+        >
       </div>
       <div class="col-md-3">
         <label class="form-label">Biển số</label>
-        <input type="text" name="plate" class="form-control" value="{{ filters.plate or '' }}" placeholder="VD: 59A12345">
+        <input
+          type="text"
+          name="plate"
+          class="form-control"
+          placeholder="VD: 59A12345"
+        >
       </div>
       <div class="col-md-3">
         <label class="form-label">Mã vé</label>
-        <input type="text" name="ticket_code" class="form-control" value="{{ filters.ticket_code or '' }}" placeholder="6 số">
+        <input
+          type="text"
+          name="ticket_code"
+          class="form-control"
+          placeholder="6 số"
+        >
       </div>
       <div class="col-md-3">
         <label class="form-label">Trạng thái</label>
         <select name="status" class="form-select">
           <option value="">-- Tất cả --</option>
-          <option value="IN"  {% if filters.status == 'IN' %}selected{% endif %}>Đang gửi</option>
-          <option value="OUT" {% if filters.status == 'OUT' %}selected{% endif %}>Đã ra</option>
+          <option value="IN">Đang gửi</option>
+          <option value="OUT">Đã ra</option>
         </select>
       </div>
 
@@ -36,15 +51,6 @@
     </form>
   </div>
 </div>
-
-<!-- Thống kê nhanh -->
-{% if summary %}
-<div class="alert alert-info mb-3">
-  Ngày: <b>{{ summary.date }}</b> &nbsp;|&nbsp;
-  Số lượt khách ngoài: <b>{{ summary.count }}</b> &nbsp;|&nbsp;
-  Doanh thu: <b>{{ "{:,}".format(summary.revenue) }} VNĐ</b>
-</div>
-{% endif %}
 
 <!-- Danh sách vé khách ngoài -->
 <div class="card">
