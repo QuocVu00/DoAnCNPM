@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Resident Dashboard{% endblock %}
+
+{% block head %}
+  {{ super() }}
+  <style>
+    /* Khi bật chat: thu nội dung lại bằng padding-right,
+       chừa chỗ cho panel chat + 1 ít khoảng trống */
+    .resident-main.with-chat {
+      padding-right: 380px;  /* 360px panel + ~20px khoảng cách */
+      transition: padding-right 0.2s ease-in-out;
+    }
+
+    /* Panel chat cố định bên phải, dưới thanh menu */
+    #residentChatPanel {
+      position: fixed;
+      top: 56px; /* chiều cao navbar ~56px */
+      right: 0;
+      width: 360px;
+      height: calc(100vh - 56px);
+      background-color: #fdfdfd;
+      box-shadow: -4px 0 12px rgba(15, 23, 42, 0.18);
+      border-left: 1px solid #e5e7eb;
+      display: none;
+      z-index: 1040; /* trên nội dung, dưới navbar */
+    }
+
+    #residentChatPanel.show {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Avatar cư dân */
+    .resident-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #0d6efd;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 20px;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.25);
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Avatar + lời chào theo thời gian -->
+<div class="d-flex align-items-center gap-3 mb-3">
+  <div class="resident-avatar">
+    {{ avatar_letter }}
+  </div>
+  <h3 class="mb-0">
+    {{ greeting }}, {{ resident.full_name }}
+  </h3>
+</div>
+
+<div class="row mb-3">
+  <!-- Thông tin chung -->
+  <div class="col-md-6 mb-3">
+    <div class="card h-100">
+      <div class="card-header">Thông tin chung</div>
+      <div class="card-body">
+        <p><b>Căn hộ:</b> Tầng {{ resident.floor }}, phòng {{ resident.room }}</p>
+        <p><b>Biển số xe:</b> {{ resident.plate_number }}</p>
+        <p>
+          <b>Trạng thái xe:</b>
+          {% if resident.is_in_parking %}
+            <span class="text-success">Đang ở bãi</span>
+          {% else %}
+            <span class="text-muted">Không ở bãi</span>
+          {% endif %}
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lịch sử ra/vào -->
+  <div class="col-md-6 mb-3">
+    <div class="card h-100">
+      <div class="card-header">Lịch sử ra/vào gần đây</div>
+      <div class="card-body p-0">
+        <table class="table mb-0">
+          <thead>
+            <tr>
+              <th>Thời gian</th>
+              <th>Loại</th>
+              <th>Biển số</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for log in logs %}
+            <tr>
+              <td>{{ log.timestamp }}</td>
+              <td>{{ log.event_type }}</td>
+              <td>{{ log.plate_number }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="3" class="text-center text-muted">Chưa có dữ liệu</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ====== PANEL CHAT CỐ ĐỊNH BÊN PHẢI ====== #}
+<div id="residentChatPanel">
+  <div class="d-flex align-items-center justify-content-between border-bottom px-3 py-2">
+    <h6 class="mb-0">Trò chuyện với admin</h6>
+    <button
+      type="button"
+      class="btn-close"
+      aria-label="Close"
+      id="closeResidentChat"
+    ></button>
+  </div>
+
+  <div class="d-flex flex-column flex-grow-1 px-3 py-2">
+    <!-- Lịch sử chat -->
+    <div
+      class="border rounded mb-3 p-2 flex-grow-1"
+      style="overflow-y: auto; background-color: #f8fafc;"
+    >
+      {% if messages %}
+        {% for m in messages %}
+          {% if m.sender == 'resident' %}
+            <div class="d-flex justify-content-end mb-2">
+              <div class="bg-primary text-white rounded-3 px-3 py-2">
+                <div class="small">{{ m.content }}</div>
+                <div class="small text-light text-end" style="font-size: 0.75rem;">
+                  Bạn • {{ m.time }}
+                </div>
+              </div>
+            </div>
+          {% else %}
+            <div class="d-flex justify-content-start mb-2">
+              <div class="bg-white border rounded-3 px-3 py-2">
+                <div class="small">{{ m.content }}</div>
+                <div class="small text-muted" style="font-size: 0.75rem;">
+                  Admin • {{ m.time }}
+                </div>
+              </div>
+            </div>
+          {% endif %}
+        {% endfor %}
+      {% else %}
+        <div class="text-muted text-center small py-3">
+          Chưa có tin nhắn nào. Hãy gửi tin nhắn đầu tiên cho admin.
+        </div>
+      {% endif %}
+    </div>
+
+    <!-- Form gửi tin -->
+    <form method="post" action="{{ url_for('resident_chat_send') }}">
+      <div class="mb-2">
+        <label class="form-label">Nội dung tin nhắn</label>
+        <textarea
+          name="content"
+          rows="2"
+          class="form-control"
+          placeholder="Nhập tin nhắn gửi cho admin..."
+          required
+        ></textarea>
+      </div>
+      <button class="btn btn-primary w-100" type="submit">Gửi</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

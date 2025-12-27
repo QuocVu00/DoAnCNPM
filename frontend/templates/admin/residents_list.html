@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Danh sách cư dân{% endblock %}
+
+{% block content %}
+<h3 class="mb-3">Danh sách cư dân</h3>
+
+<div class="card">
+  <div class="card-header">
+    Toàn bộ cư dân (sắp xếp theo Tầng / Phòng)
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-striped table-hover table-sm mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>ID</th>
+            <th>Họ tên</th>
+            <th>Tầng/Phòng</th>
+            <th>Biển số</th>
+            <th>Tài khoản</th>
+            <th>Trạng thái</th>
+            <th>Mã dự phòng</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if residents and residents|length > 0 %}
+            {% for r in residents %}
+              <tr>
+                <td>{{ r.id }}</td>
+                <td>{{ r.full_name }}</td>
+                <td>{{ r.floor }}/{{ r.room }}</td>
+                <td>{{ r.plate_number }}</td>
+                <td>
+                  <div><b>Username:</b> {{ r.username }}</div>
+                  <div><b>Mật khẩu:</b> {{ r.password }}</div>
+                </td>
+                <td>
+                  {% if r.status == 'active' %}
+                    <span class="badge bg-success">active</span>
+                  {% elif r.status == 'inactive' %}
+                    <span class="badge bg-secondary">inactive</span>
+                  {% else %}
+                    <span class="badge bg-light text-dark">{{ r.status }}</span>
+                  {% endif %}
+                </td>
+                <td>{{ r.backup_code }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="7" class="text-center text-muted py-3">
+                Chưa có cư dân nào trong hệ thống.
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

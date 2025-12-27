@@ -1,0 +1,433 @@
+{% extends "base.html" %}
+{% block title %}Trạm cổng – AI biển số tự động{% endblock %}
+
+{% block head %}
+  {{ super() }}
+  <style>
+    .gate-page {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .gate-page h3 {
+      margin-bottom: 0.75rem;
+    }
+
+    .gate-page p.text-muted {
+      margin-bottom: 0.75rem;
+    }
+
+    .gate-card video {
+      width: 100%;
+      max-height: 380px;
+      border-radius: 0.5rem;
+      background: #000;
+      object-fit: cover;
+    }
+
+    .gate-card canvas {
+      display: none;
+    }
+
+    /* Giảm padding để đỡ tốn chiều cao màn hình */
+    .gate-page .card-body {
+      padding: 0.75rem 1rem;
+    }
+
+    .gate-page .card-header {
+      padding: 0.5rem 1rem;
+    }
+
+    .gate-page .form-text {
+      font-size: 0.8rem;
+    }
+
+    .gate-page .row.gate-main {
+      align-items: stretch;
+    }
+
+    /* Thông báo lớn trên màn hình */
+    .big-notice {
+      position: fixed;
+      top: 70px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2000;
+      min-width: 50%;
+      max-width: 90%;
+      font-size: 1.3rem;
+      display: none;
+    }
+
+    @media (max-width: 991.98px) {
+      .gate-page {
+        padding-left: 0.25rem;
+        padding-right: 0.25rem;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+<div class="gate-page">
+  <h3>Trạm cổng – AI nhận diện biển số tự động</h3>
+  <p class="text-muted small">
+    Khi bật, hệ thống sẽ liên tục lấy khung hình từ camera, gửi lên server để AI đọc biển số
+    và tự quyết định VÀO (IN) hay RA (OUT) dựa vào trạng thái hiện tại trong bãi.
+  </p>
+
+  <div class="row gate-main g-3">
+    <!-- Camera biển số -->
+    <div class="col-md-5 mb-3 gate-card">
+      <div class="card h-100">
+        <div class="card-header">Camera biển số</div>
+        <div class="card-body">
+          <video id="videoPlate" autoplay playsinline></video>
+          <canvas id="canvasPlate"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Thông tin và điều khiển -->
+    <div class="col-md-7 mb-3">
+      <div class="card h-100">
+        <div class="card-header">Điều khiển &amp; thông tin</div>
+        <div class="card-body">
+          <!-- Mã dự phòng cư dân -->
+          <div class="mb-2">
+            <label class="form-label">Mã dự phòng (nếu dùng)</label>
+            <input
+              type="text"
+              class="form-control"
+              id="backupCode"
+              placeholder="Nhập mã dự phòng của cư dân (không bắt buộc)"
+            >
+            <div class="form-text">
+              Nếu cư dân quên biển số hoặc AI đọc sai, có thể nhập mã dự phòng để hỗ trợ xác định.
+            </div>
+          </div>
+
+          <!-- Mã vé 6 số cho khách vãng lai khi RA -->
+          <div class="mb-2">
+            <label class="form-label">Mã vé 6 số (khách vãng lai khi RA)</label>
+            <input
+              type="text"
+              class="form-control"
+              id="ticketCode"
+              placeholder="Nhập mã vé 6 số được cấp khi VÀO bãi (nếu là khách ngoài)"
+            >
+            <div class="form-text">
+              Khách vãng lai khi lấy xe RA phải nhập chính xác mã vé 6 số này thì hệ thống mới cho xe ra.
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label d-block">Chế độ</label>
+            <span class="badge bg-success">Tự động (AUTO)</span>
+            <div class="form-text">
+              AI sẽ tự quyết định xe vào/ra dựa trên trạng thái hiện tại của xe trong bãi.
+            </div>
+          </div>
+
+          <div class="d-flex gap-2 mt-2">
+            <button class="btn btn-primary" id="btnStartAuto" type="button">
+              Bật camera &amp; AI tự động
+            </button>
+            <button class="btn btn-outline-danger" id="btnStopAuto" type="button" disabled>
+              Dừng AI
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trạng thái -->
+  <div class="row">
+    <div class="col-12 mb-3">
+      <div class="card h-100">
+        <div class="card-header">Trạng thái xử lý</div>
+        <div class="card-body">
+          <div id="gateStatus" class="alert alert-info small mb-0">
+            Chưa bật camera.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Thông báo lớn cho cư dân / khách ngoài -->
+<div id="bigNotice" class="alert big-notice text-center" role="alert"></div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    (function () {
+      const videoPlate  = document.getElementById("videoPlate");
+      const canvasPlate = document.getElementById("canvasPlate");
+
+      const btnStart    = document.getElementById("btnStartAuto");
+      const btnStop     = document.getElementById("btnStopAuto");
+      const statusBox   = document.getElementById("gateStatus");
+      const backupCode  = document.getElementById("backupCode");
+      const ticketCode  = document.getElementById("ticketCode");
+
+      const bigNotice   = document.getElementById("bigNotice");
+      let bigNoticeTimer = null;
+
+      let stream = null;
+      let timerId = null;
+      let isProcessing = false;
+
+      function showBigNotice(message, type, duration) {
+        if (!bigNotice) return;
+
+        bigNotice.className = "alert big-notice text-center";
+        switch (type) {
+          case "success":
+            bigNotice.classList.add("alert-success");
+            break;
+          case "warning":
+            bigNotice.classList.add("alert-warning");
+            break;
+          case "danger":
+            bigNotice.classList.add("alert-danger");
+            break;
+          default:
+            bigNotice.classList.add("alert-info");
+        }
+
+        bigNotice.textContent = message;
+        bigNotice.style.display = "block";
+
+        if (bigNoticeTimer) {
+          clearTimeout(bigNoticeTimer);
+        }
+        bigNoticeTimer = setTimeout(function () {
+          bigNotice.style.display = "none";
+        }, duration || 20000); // mặc định 20s
+      }
+
+      async function startAuto() {
+        if (stream) return;
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+          videoPlate.srcObject = stream;
+
+          if (btnStart) btnStart.disabled = true;
+          if (btnStop)  btnStop.disabled  = false;
+
+          statusBox.className = "alert alert-success small";
+          statusBox.textContent = "Camera đã bật. AI đang chờ biển số xuất hiện trong khung hình...";
+
+          // Mỗi 1.5 giây chụp 1 frame gửi lên server
+          timerId = setInterval(captureAndSendAuto, 1500);
+        } catch (err) {
+          console.error(err);
+          statusBox.className = "alert alert-danger small";
+          statusBox.textContent = "Không mở được camera: " + err.message;
+        }
+      }
+
+      function stopAuto() {
+        if (timerId) {
+          clearInterval(timerId);
+          timerId = null;
+        }
+        if (stream) {
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          stream = null;
+        }
+
+        if (btnStart) btnStart.disabled = false;
+        if (btnStop)  btnStop.disabled  = true;
+
+        statusBox.className = "alert alert-info small";
+        statusBox.textContent = "Đã dừng AI & camera.";
+      }
+
+      function captureFrame(video, canvas) {
+        if (!video || video.readyState < 2) {
+          return null;
+        }
+        const width  = video.videoWidth  || 640;
+        const height = video.videoHeight || 480;
+
+        canvas.width  = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0, width, height);
+        return canvas.toDataURL("image/png");
+      }
+
+      async function captureAndSendAuto() {
+        if (!stream || isProcessing) return;
+
+        const dataUrl = captureFrame(videoPlate, canvasPlate);
+        if (!dataUrl) return;
+
+        isProcessing = true;
+
+        const codeBackup = backupCode.value.trim();
+        const codeTicket = ticketCode.value.trim();
+
+        try {
+          const resp = await fetch("{{ url_for('gate_capture') }}", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              mode: "AUTO",
+              backup_code: codeBackup || null,
+              ticket_code: codeTicket || null,
+              plate_image: dataUrl,
+              face_image: null,
+              scene_image: null
+            })
+          });
+
+          const json = await resp.json();
+
+          // ----- Xử lý kết quả theo user_type -----
+          if (json.user_type === "guest") {
+            // Khách vãng lai
+            if (!json.ok && json.need_ticket_code) {
+              statusBox.className = "alert alert-warning small";
+              statusBox.textContent = json.ticket_code_mismatch
+                ? "Mã vé 6 số không đúng, vui lòng nhập lại."
+                : "Vui lòng nhập mã vé 6 số đã được cấp khi VÀO bãi.";
+
+              showBigNotice(
+                json.ticket_code_mismatch
+                  ? "Mã vé 6 số KHÔNG ĐÚNG. Vui lòng nhập lại đúng mã vé được cấp khi VÀO bãi."
+                  : "Khách vãng lai RA bãi. Vui lòng nhập mã vé 6 số đã được cấp khi VÀO bãi.",
+                "warning",
+                10000
+              );
+              ticketCode.focus();
+            } else if (json.ok && json.mode === "IN" && json.ticket_code_created) {
+              statusBox.className = "alert alert-success small";
+              statusBox.textContent =
+                "Khách vãng lai VÀO bãi. Biển số: " +
+                (json.plate_text || "") +
+                ". Mã vé 6 số của bạn: " +
+                json.ticket_code_created +
+                ".";
+
+              showBigNotice(
+                "KHÁCH VÃNG LAI VÀO BÃI\nBiển số: " +
+                  (json.plate_text || "") +
+                  " – Mã vé 6 số của bạn: " +
+                  json.ticket_code_created +
+                  ". Vui lòng chụp lại hoặc ghi nhớ để xuất trình khi RA.",
+                "success",
+                10000
+              );
+
+              ticketCode.value = "";
+            } else if (json.ok && json.mode === "OUT") {
+              statusBox.className = "alert alert-success small";
+              const feeText =
+                typeof json.fee === "number"
+                  ? "Số tiền cần thanh toán: " +
+                    json.fee.toLocaleString("vi-VN") +
+                    " VNĐ."
+                  : "Đã tính phí gửi xe, vui lòng thanh toán tại cổng.";
+              statusBox.textContent =
+                "Khách vãng lai RA bãi. Biển số: " +
+                (json.plate_text || "") +
+                ". " +
+                feeText;
+
+              showBigNotice(
+                "KHÁCH VÃNG LAI RA BÃI\n" +
+                  (json.plate_text ? "Biển số: " + json.plate_text + ". " : "") +
+                  feeText,
+                "success",
+                8000
+              );
+
+              ticketCode.value = "";
+            } else if (json.ok && !json.plate_text) {
+              statusBox.className = "alert alert-info small";
+              statusBox.textContent =
+                "AI chưa nhận diện được biển số rõ ràng, đang tiếp tục quan sát...";
+            } else {
+              statusBox.className = "alert alert-danger small";
+              statusBox.textContent =
+                json.message || "Lỗi khi xử lý khách vãng lai tại server.";
+            }
+
+          } else if (json.user_type === "resident") {
+            // Cư dân -> chuyển sang bước nhận diện khuôn mặt
+            if (json.ok && json.next_step === "face") {
+              statusBox.className = "alert alert-success small";
+              statusBox.textContent =
+                "Biển số thuộc cư dân (ID " +
+                json.matched_resident_id +
+                "). Đang chuyển sang bước nhận diện khuôn mặt...";
+
+              showBigNotice(
+                "XE CƯ DÂN ĐÃ ĐƯỢC NHẬN DIỆN.\nĐang chuyển sang bước xác thực khuôn mặt.",
+                "info",
+                3000
+              );
+
+              // Sau 1 giây chuyển trang sang gate_face
+              setTimeout(function () {
+                const url = "{{ url_for('gate_face') }}" +
+                  "?resident_id=" + encodeURIComponent(json.matched_resident_id) +
+                  "&plate=" + encodeURIComponent(json.plate_text || "");
+                window.location.href = url;
+              }, 1000);
+            } else if (json.ok && !json.plate_text) {
+              statusBox.className = "alert alert-info small";
+              statusBox.textContent =
+                "AI chưa nhận diện được biển số rõ ràng, đang tiếp tục quan sát...";
+            } else {
+              statusBox.className = "alert alert-danger small";
+              statusBox.textContent =
+                json.message || "Lỗi khi xử lý cư dân tại server.";
+            }
+
+          } else {
+            // user_type = None
+            if (json.ok && json.plate_text) {
+              const modeText = json.mode === "OUT" ? "RA (OUT)" : "VÀO (IN)";
+              statusBox.className = "alert alert-success small";
+              statusBox.textContent =
+                "Biển số: " +
+                json.plate_text +
+                " | Sự kiện: " +
+                modeText;
+            } else if (json.ok) {
+              statusBox.className = "alert alert-info small";
+              statusBox.textContent =
+                "AI chưa nhận diện được biển số rõ ràng, đang tiếp tục quan sát...";
+            } else {
+              statusBox.className = "alert alert-danger small";
+              statusBox.textContent =
+                json.message || "Lỗi khi xử lý tại server.";
+            }
+          }
+        } catch (e) {
+          console.error(e);
+          statusBox.className = "alert alert-danger small";
+          statusBox.textContent = "Không gửi được dữ liệu lên server.";
+        } finally {
+          isProcessing = false;
+        }
+      }
+
+      if (btnStart) btnStart.addEventListener("click", startAuto);
+      if (btnStop)  btnStop.addEventListener("click", stopAuto);
+    })();
+  </script>
+{% endblock %}

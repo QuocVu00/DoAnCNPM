@@ -1,0 +1,22 @@
+# Python venv
+venv/
+*/venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# VS Code
+.vscode/
+
+# Environment variables
+.env
+
+# Docker stuff
+*.log
+
+# Node (FE sau này)
+node_modules/
+dist/
+build/
+.next/

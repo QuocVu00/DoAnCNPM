@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block title %}Trạm cổng ra/vào{% endblock %}
+
+{% block head %}
+  {{ super() }}
+  <style>
+    .gate-card video {
+      width: 100%;
+      border-radius: 0.5rem;
+      background: #000;
+    }
+    .gate-card canvas {
+      display: none;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+<h3 class="mb-3">Trạm cổng ra/vào</h3>
+<p class="text-muted small">
+  Trang này dùng đặt tại cổng để chụp biển số, khuôn mặt và khách + xe,
+  đồng thời nhập mã dự phòng / mã vé để check in - out.
+</p>
+
+<div class="row mb-3">
+  <!-- Camera biển số -->
+  <div class="col-md-4 mb-3 gate-card">
+    <div class="card h-100">
+      <div class="card-header">Camera biển số</div>
+      <div class="card-body">
+        <video id="videoPlate" autoplay playsinline></video>
+        <canvas id="canvasPlate"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Camera khuôn mặt -->
+  <div class="col-md-4 mb-3 gate-card">
+    <div class="card h-100">
+      <div class="card-header">Camera khuôn mặt</div>
+      <div class="card-body">
+        <video id="videoFace" autoplay playsinline></video>
+        <canvas id="canvasFace"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Camera khách + xe -->
+  <div class="col-md-4 mb-3 gate-card">
+    <div class="card h-100">
+      <div class="card-header">Camera khách + xe</div>
+      <div class="card-body">
+        <video id="videoScene" autoplay playsinline></video>
+        <canvas id="canvasScene"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <!-- Form nhập mã dự phòng + mode -->
+  <div class="col-md-6 mb-3">
+    <div class="card h-100">
+      <div class="card-header">Thông tin check in / out</div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label class="form-label">Mã dự phòng / mã vé</label>
+          <input type="text" class="form-control" id="backupCode"
+                 placeholder="Nhập mã dự phòng...">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label d-block">Chế độ</label>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="mode" id="modeIn" value="IN" checked>
+            <label class="form-check-label" for="modeIn">Check-in</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="mode" id="modeOut" value="OUT">
+            <label class="form-check-label" for="modeOut">Check-out</label>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" id="btnStartCamera" type="button">
+          Bật camera
+        </button>
+        <button class="btn btn-success ms-2" id="btnCaptureSend" type="button" disabled>
+          Chụp &amp; Gửi lên hệ thống
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trạng thái -->
+  <div class="col-md-6 mb-3">
+    <div class="card h-100">
+      <div class="card-header">Trạng thái xử lý</div>
+      <div class="card-body">
+        <div id="gateStatus" class="alert alert-info small mb-0">
+          Chưa bật camera.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    (function () {
+      const videoPlate  = document.getElementById("videoPlate");
+      const videoFace   = document.getElementById("videoFace");
+      const videoScene  = document.getElementById("videoScene");
+      const canvasPlate = document.getElementById("canvasPlate");
+      const canvasFace  = document.getElementById("canvasFace");
+      const canvasScene = document.getElementById("canvasScene");
+
+      const btnStart    = document.getElementById("btnStartCamera");
+      const btnCapture  = document.getElementById("btnCaptureSend");
+      const statusBox   = document.getElementById("gateStatus");
+      const backupCode  = document.getElementById("backupCode");
+
+      let stream = null;
+
+      async function startCamera() {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+
+          // Dùng cùng một stream cho 3 video (thực tế là 1 camera;
+          // nếu có nhiều camera, bạn có thể sửa ở đây để chọn device khác)
+          videoPlate.srcObject = stream;
+          videoFace.srcObject  = stream;
+          videoScene.srcObject = stream;
+
+          btnCapture.disabled = false;
+          statusBox.className = "alert alert-success small";
+          statusBox.textContent = "Camera đã bật. Sẵn sàng chụp và gửi.";
+        } catch (err) {
+          console.error(err);
+          statusBox.className = "alert alert-danger small";
+          statusBox.textContent = "Không mở được camera: " + err.message;
+        }
+      }
+
+      function captureFromVideo(video, canvas) {
+        const track = stream ? stream.getVideoTracks()[0] : null;
+        const width  = (track && track.getSettings().width)  || video.videoWidth  || 640;
+        const height = (track && track.getSettings().height) || video.videoHeight || 480;
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0, width, height);
+        return canvas.toDataURL("image/png");
+      }
+
+      async function captureAndSend() {
+        if (!stream) return;
+
+        const mode = document.querySelector("input[name='mode']:checked").value;
+        const code = backupCode.value.trim();
+
+        statusBox.className = "alert alert-info small";
+        statusBox.textContent = "Đang chụp và gửi dữ liệu...";
+
+        const plateImage = captureFromVideo(videoPlate, canvasPlate);
+        const faceImage  = captureFromVideo(videoFace,  canvasFace);
+        const sceneImage = captureFromVideo(videoScene, canvasScene);
+
+        try {
+          const resp = await fetch("{{ url_for('gate_capture') }}", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              mode: mode,
+              backup_code: code,
+              plate_image: plateImage,
+              face_image: faceImage,
+              scene_image: sceneImage
+            })
+          });
+
+          const json = await resp.json();
+          if (json.ok) {
+            let msg = "Đã lưu dữ liệu " + (json.mode === "IN" ? "Check-in" : "Check-out") + ".";
+            if (json.matched_resident_id) {
+              msg += " Khớp cư dân ID: " + json.matched_resident_id + ".";
+            } else if (code) {
+              msg += " Không tìm thấy cư dân khớp mã dự phòng.";
+            }
+            statusBox.className = "alert alert-success small";
+            statusBox.textContent = msg;
+          } else {
+            statusBox.className = "alert alert-danger small";
+            statusBox.textContent = "Lỗi lưu dữ liệu: " + (json.error || "unknown");
+          }
+        } catch (e) {
+          console.error(e);
+          statusBox.className = "alert alert-danger small";
+          statusBox.textContent = "Lỗi khi gửi dữ liệu lên server.";
+        }
+      }
+
+      btnStart.addEventListener("click", startCamera);
+      btnCapture.addEventListener("click", captureAndSend);
+    })();
+  </script>
+{% endblock %}
