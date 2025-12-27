@@ -6,6 +6,10 @@ from datetime import datetime
 import random
 import unicodedata
 
+import os
+import base64
+from pathlib import Path
+
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from backend.config import Config
@@ -21,6 +25,11 @@ app = Flask(
 app.config.from_object(Config)
 app.secret_key = Config.SECRET_KEY
 
+# Thư mục lưu ảnh cho trạm cổng (gate kiosk)
+GATE_UPLOAD_DIR = Path(app.static_folder) / "uploads" / "gate"
+(GATE_UPLOAD_DIR / "plates").mkdir(parents=True, exist_ok=True)
+(GATE_UPLOAD_DIR / "faces").mkdir(parents=True, exist_ok=True)
+(GATE_UPLOAD_DIR / "scenes").mkdir(parents=True, exist_ok=True)
 
 # đăng ký backend API
 app.register_blueprint(admin_bp)
@@ -112,15 +121,12 @@ def login():
         ok = False
 
         if pwd_hash:
-            # đã có hash -> kiểm tra như bình thường
             if check_password_hash(pwd_hash, password):
                 ok = True
         else:
-            # cư dân cũ chưa có password_hash: dùng mật khẩu mặc định từ SĐT
             expected_plain = make_initial_password(phone)
             if password == expected_plain:
                 ok = True
-                # lưu hash luôn để lần sau check cho chuẩn
                 new_hash = generate_password_hash(expected_plain)
                 execute(
                     "UPDATE residents SET password_hash = %s WHERE id = %s",
@@ -130,12 +136,11 @@ def login():
         if ok:
             session.clear()
             session["user_id"] = resident["id"]
-            session["resident_id"] = resident["id"]  # <-- lưu riêng id cư dân
+            session["resident_id"] = resident["id"]
             session["username"] = resident["username"]
             session["role"] = "resident"
             return redirect(url_for("resident_dashboard"))
 
-    # 3) Nếu cả hai đều fail
     flash("Sai tài khoản hoặc mật khẩu", "danger")
     return redirect(url_for("login"))
 
@@ -152,7 +157,6 @@ def admin_home():
     if not require_role("admin", "staff"):
         return redirect(url_for("login"))
 
-    # --- Thống kê cơ bản ---
     total_residents = query_one(
         "SELECT COUNT(*) AS c FROM residents"
     )["c"]
@@ -179,7 +183,6 @@ def admin_home():
         "active_vehicles": active_vehicles,
     }
 
-    # --- Dữ liệu biểu đồ doanh thu 7 ngày gần nhất ---
     revenue_rows = query_all(
         """
         SELECT
@@ -196,7 +199,6 @@ def admin_home():
     revenue_labels = [r["day"].strftime("%d/%m") for r in reversed(revenue_rows)]
     revenue_values = [float(r["total"] or 0) for r in reversed(revenue_rows)]
 
-    # --- Dữ liệu biểu đồ xe ra/vào 7 ngày gần nhất ---
     traffic_rows = query_all(
         """
         SELECT
@@ -214,7 +216,6 @@ def admin_home():
     traffic_in = [int(r["in_count"] or 0) for r in reversed(traffic_rows)]
     traffic_out = [int(r["out_count"] or 0) for r in reversed(traffic_rows)]
 
-    # --- Thông báo hệ thống (demo) ---
     notifications = [
         {
             "level": "warning",
@@ -248,7 +249,7 @@ def admin_home():
     )
 
 
-# ---------- TRANG QUẢN LÝ CƯ DÂN (CÓ FORM + BẢNG) ----------
+# ---------- TRANG QUẢN LÝ CƯ DÂN ----------
 @app.route("/admin/residents", methods=["GET"])
 def admin_residents():
     if not require_role("admin", "staff"):
@@ -297,7 +298,6 @@ def admin_residents():
     return render_template("admin/residents.html", residents=residents)
 
 
-# ---------- TRANG “CƯ DÂN” – CHỈ HIỂN THỊ DANH SÁCH ----------
 @app.route("/admin/residents/list", methods=["GET"])
 def admin_residents_list():
     if not require_role("admin", "staff"):
@@ -364,7 +364,6 @@ def admin_create_resident():
         flash("Họ tên là bắt buộc", "danger")
         return redirect(url_for("admin_residents"))
 
-    # 1) thêm cư dân cơ bản
     sql_resident = """
         INSERT INTO residents (full_name, floor, room, cccd, email, phone)
         VALUES (%s, %s, %s, %s, %s, %s)
@@ -376,7 +375,6 @@ def admin_create_resident():
     )
     resident_id = new_resident["id"]
 
-    # 2) tạo username + password_hash và lưu vào residents
     username = make_username(full_name, phone)
     raw_password = make_initial_password(phone)
     password_hash = generate_password_hash(raw_password)
@@ -391,7 +389,6 @@ def admin_create_resident():
         (username, password_hash, resident_id),
     )
 
-    # 3) thêm xe nếu có
     if plate_number:
         sql_vehicle = """
             INSERT INTO resident_vehicles (resident_id, plate, vehicle_type)
@@ -399,7 +396,6 @@ def admin_create_resident():
         """
         execute(sql_vehicle, (resident_id, plate_number, vehicle_type))
 
-    # 4) mã dự phòng
     backup_code = f"{random.randint(0, 999999):06d}"
     sql_backup = """
         INSERT INTO resident_backup_codes (resident_id, backup_code, is_active)
@@ -497,7 +493,7 @@ def admin_report_page():
     return render_template("admin/report.html", today=today)
 
 
-# ---------- Chat admin - cư dân (demo) ----------
+# ---------- Chat admin - cư dân ----------
 @app.route("/admin/chat")
 @app.route("/admin/chat/<int:resident_id>")
 def admin_chat(resident_id=None):
@@ -509,13 +505,25 @@ def admin_chat(resident_id=None):
     )
 
     active_resident = None
+    messages = []
+
     if resident_id:
         active_resident = query_one(
             "SELECT id, full_name, floor, room FROM residents WHERE id = %s",
             (resident_id,),
         )
 
-    messages = []  # demo
+        if active_resident:
+            messages = query_all(
+                """
+                SELECT sender, content, created_at
+                FROM messages
+                WHERE resident_id = %s
+                ORDER BY created_at ASC
+                LIMIT 50
+                """,
+                (resident_id,),
+            )
 
     return render_template(
         "admin/chat.html",
@@ -525,17 +533,40 @@ def admin_chat(resident_id=None):
     )
 
 
+@app.route("/admin/chat/send", methods=["POST"])
+def admin_chat_send():
+    if not require_role("admin", "staff"):
+        return redirect(url_for("login"))
+
+    resident_id = request.form.get("resident_id")
+    content = request.form.get("content", "").strip()
+
+    if not resident_id:
+        flash("Chưa chọn cư dân để gửi tin nhắn.", "warning")
+        return redirect(url_for("admin_chat"))
+
+    if not content:
+        flash("Nội dung tin nhắn không được để trống.", "warning")
+        return redirect(url_for("admin_chat", resident_id=resident_id))
+
+    execute(
+        """
+        INSERT INTO messages (resident_id, sender, content)
+        VALUES (%s, %s, %s)
+        """,
+        (resident_id, "admin", content),
+    )
+
+    flash("Đã gửi tin nhắn cho cư dân.", "success")
+    return redirect(url_for("admin_chat", resident_id=resident_id))
+
+
 # ---------- Resident dashboard ----------
 @app.route("/resident/dashboard")
 def resident_dashboard():
-    """
-    Ưu tiên lấy cư dân theo resident_id trong session (đúng người đang đăng nhập).
-    Nếu không có (admin mở để xem thử) thì fallback về cư dân đầu tiên.
-    """
     resident_id = session.get("resident_id")
 
     if resident_id:
-        # lấy đúng cư dân đang đăng nhập
         resident_row = query_one(
             """
             SELECT
@@ -554,7 +585,6 @@ def resident_dashboard():
             (resident_id,),
         )
     else:
-        # demo: lấy cư dân đầu tiên
         resident_row = query_one(
             """
             SELECT
@@ -582,6 +612,7 @@ def resident_dashboard():
             "is_in_parking": False,
         }
         logs = []
+        messages = []
     else:
         resident = {
             "id": resident_row["id"],
@@ -606,23 +637,154 @@ def resident_dashboard():
             (resident["id"],),
         )
 
-    messages = []
+        messages = query_all(
+            """
+            SELECT
+                sender,
+                content,
+                DATE_FORMAT(created_at, '%H:%i %d/%m') AS time
+            FROM messages
+            WHERE resident_id = %s
+            ORDER BY created_at ASC
+            LIMIT 50
+            """,
+            (resident["id"],),
+        )
+
+    hour = datetime.now().hour
+    if 5 <= hour < 10:
+        greeting = "Xin chào buổi sáng"
+    elif 10 <= hour < 13:
+        greeting = "Xin chào buổi trưa"
+    elif 13 <= hour < 18:
+        greeting = "Xin chào buổi chiều"
+    elif 18 <= hour < 22:
+        greeting = "Xin chào buổi tối"
+    else:
+        greeting = "Xin chào"
+
+    avatar_letter = resident["full_name"][0].upper() if resident["full_name"] else "U"
+
     return render_template(
         "resident/dashboard.html",
         resident=resident,
         logs=logs,
         messages=messages,
+        greeting=greeting,
+        avatar_letter=avatar_letter,
     )
 
 
 @app.route("/resident/chat", methods=["POST"])
 def resident_chat_send():
+    resident_id = session.get("resident_id")
+    if not resident_id:
+        flash("Bạn cần đăng nhập bằng tài khoản cư dân để gửi tin nhắn.", "danger")
+        return redirect(url_for("login"))
+
     content = request.form.get("content", "").strip()
     if not content:
         flash("Nội dung tin nhắn không được để trống", "warning")
-    else:
-        flash("Tin nhắn đã được ghi nhận (demo).", "success")
-    return redirect(url_for("resident_dashboard"))
+        return redirect(url_for("resident_dashboard", chat=1))
+
+    execute(
+        """
+        INSERT INTO messages (resident_id, sender, content)
+        VALUES (%s, %s, %s)
+        """,
+        (resident_id, "resident", content),
+    )
+
+    flash("Tin nhắn đã được gửi tới Ban quản lý.", "success")
+    return redirect(url_for("resident_dashboard", chat=1))
+
+
+# ================== TRẠM CỔNG RA/VÀO (KIOSK) ==================
+
+@app.route("/gate")
+def gate_kiosk():
+    return render_template("gate/gate.html")
+
+@app.route("/gate/plate")
+def gate_plate():
+    return render_template("gate/gate_plate.html")
+
+@app.route("/gate/face")
+def gate_face():
+    return render_template("gate/gate_face.html")
+
+@app.route("/gate/scene")
+def gate_scene():
+    return render_template("gate/gate_scene.html")
+
+
+
+@app.route("/gate/capture", methods=["POST"])
+def gate_capture():
+    data = request.get_json(silent=True) or {}
+
+    mode = (data.get("mode") or "IN").upper()
+    if mode not in ("IN", "OUT"):
+        mode = "IN"
+
+    backup_code = (data.get("backup_code") or "").strip() or None
+    plate_data = data.get("plate_image")
+    face_data = data.get("face_image")
+    scene_data = data.get("scene_image")
+
+    def save_data_url(data_url, folder_name, prefix):
+        if not data_url or not isinstance(data_url, str) or not data_url.startswith("data:image"):
+            return None
+        try:
+            header, encoded = data_url.split(",", 1)
+            img_bytes = base64.b64decode(encoded)
+        except Exception:
+            return None
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{prefix}_{ts}.png"
+        folder = GATE_UPLOAD_DIR / folder_name
+        folder.mkdir(parents=True, exist_ok=True)
+        filepath = folder / filename
+        with open(filepath, "wb") as f:
+            f.write(img_bytes)
+        return f"{folder_name}/{filename}"
+
+    plate_filename = save_data_url(plate_data, "plates", "plate")
+    face_filename = save_data_url(face_data, "faces", "face")
+    scene_filename = save_data_url(scene_data, "scenes", "scene")
+
+    resident_id = None
+    if backup_code:
+        row = query_one(
+            """
+            SELECT resident_id
+            FROM resident_backup_codes
+            WHERE backup_code = %s AND is_active = 1
+            LIMIT 1
+            """,
+            (backup_code,),
+        )
+        if row:
+            resident_id = row["resident_id"]
+
+    execute(
+        """
+        INSERT INTO gate_captures
+            (mode, backup_code, resident_id, plate_image, face_image, scene_image)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (mode, backup_code, resident_id, plate_filename, face_filename, scene_filename),
+    )
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "matched_resident_id": resident_id,
+        "plate_image": plate_filename,
+        "face_image": face_filename,
+        "scene_image": scene_filename,
+    }
 
 
 if __name__ == "__main__":

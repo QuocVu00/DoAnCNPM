@@ -29,11 +29,35 @@
       display: flex;
       flex-direction: column;
     }
+
+    /* Avatar cư dân */
+    .resident-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #0d6efd;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 20px;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.25);
+    }
   </style>
 {% endblock %}
 
 {% block content %}
-<h3 class="mb-3">Xin chào, {{ resident.full_name }}</h3>
+
+<!-- Avatar + lời chào theo thời gian -->
+<div class="d-flex align-items-center gap-3 mb-3">
+  <div class="resident-avatar">
+    {{ avatar_letter }}
+  </div>
+  <h3 class="mb-0">
+    {{ greeting }}, {{ resident.full_name }}
+  </h3>
+</div>
 
 <div class="row mb-3">
   <!-- Thông tin chung -->
