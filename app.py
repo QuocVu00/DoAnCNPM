@@ -12,11 +12,17 @@ from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
+<<<<<<< HEAD
 
 from backend.config import Config
 from backend.db import query_one, query_all, execute
 from backend.routes_admin import admin_bp  # CHỈ GIỮ admin_bp
 from frontend.ai.plate_recognition import read_plate_from_image  # AI nhận diện biển số
+=======
+from backend.config import Config
+from backend.db import query_one, query_all, execute
+from backend.routes_admin import admin_bp  # CHỈ GIỮ admin_bp
+>>>>>>> 6605a310cd2290368913826b011a34b3351b204b
 
 
 app = Flask(
@@ -41,6 +47,7 @@ def require_role(*roles):
     return session.get("role") in roles
 
 
+<<<<<<< HEAD
 # ====== HỖ TRỢ: MÃ VÉ & TÍNH TIỀN KHÁCH VÃNG LAI ======
 def generate_ticket_code():
     """
@@ -61,6 +68,8 @@ def calculate_fee(checkin_time: datetime, checkout_time: datetime) -> int:
     return hours_rounded * 5000  # 5k/giờ
 
 
+=======
+>>>>>>> 6605a310cd2290368913826b011a34b3351b204b
 # ====== HÀM TẠO USERNAME / PASSWORD TỪ HỌ TÊN + SĐT ======
 def make_username(full_name, phone):
     """
@@ -418,7 +427,11 @@ def admin_create_resident():
         """
         execute(sql_vehicle, (resident_id, plate_number, vehicle_type))
 
+<<<<<<< HEAD
     backup_code = f"{random.randint(0, 999999):06d}"""
+=======
+    backup_code = f"{random.randint(0, 999999):06d}"
+>>>>>>> 6605a310cd2290368913826b011a34b3351b204b
     sql_backup = """
         INSERT INTO resident_backup_codes (resident_id, backup_code, is_active)
         VALUES (%s, %s, 1)
@@ -727,22 +740,32 @@ def resident_chat_send():
 def gate_kiosk():
     return render_template("gate/gate.html")
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 6605a310cd2290368913826b011a34b3351b204b
 @app.route("/gate/plate")
 def gate_plate():
     return render_template("gate/gate_plate.html")
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 6605a310cd2290368913826b011a34b3351b204b
 @app.route("/gate/face")
 def gate_face():
     return render_template("gate/gate_face.html")
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 6605a310cd2290368913826b011a34b3351b204b
 @app.route("/gate/scene")
 def gate_scene():
     return render_template("gate/gate_scene.html")
 
 
+<<<<<<< HEAD
 @app.route("/gate/capture", methods=["POST"])
 def gate_capture():
     """
@@ -1284,6 +1307,75 @@ def gate_face_capture():
     except Exception as e:
         print("[ERROR] gate_face_capture bị lỗi:", e)
         return {"ok": False, "error": str(e)}, 500
+=======
+
+@app.route("/gate/capture", methods=["POST"])
+def gate_capture():
+    data = request.get_json(silent=True) or {}
+
+    mode = (data.get("mode") or "IN").upper()
+    if mode not in ("IN", "OUT"):
+        mode = "IN"
+
+    backup_code = (data.get("backup_code") or "").strip() or None
+    plate_data = data.get("plate_image")
+    face_data = data.get("face_image")
+    scene_data = data.get("scene_image")
+
+    def save_data_url(data_url, folder_name, prefix):
+        if not data_url or not isinstance(data_url, str) or not data_url.startswith("data:image"):
+            return None
+        try:
+            header, encoded = data_url.split(",", 1)
+            img_bytes = base64.b64decode(encoded)
+        except Exception:
+            return None
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{prefix}_{ts}.png"
+        folder = GATE_UPLOAD_DIR / folder_name
+        folder.mkdir(parents=True, exist_ok=True)
+        filepath = folder / filename
+        with open(filepath, "wb") as f:
+            f.write(img_bytes)
+        return f"{folder_name}/{filename}"
+
+    plate_filename = save_data_url(plate_data, "plates", "plate")
+    face_filename = save_data_url(face_data, "faces", "face")
+    scene_filename = save_data_url(scene_data, "scenes", "scene")
+
+    resident_id = None
+    if backup_code:
+        row = query_one(
+            """
+            SELECT resident_id
+            FROM resident_backup_codes
+            WHERE backup_code = %s AND is_active = 1
+            LIMIT 1
+            """,
+            (backup_code,),
+        )
+        if row:
+            resident_id = row["resident_id"]
+
+    execute(
+        """
+        INSERT INTO gate_captures
+            (mode, backup_code, resident_id, plate_image, face_image, scene_image)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (mode, backup_code, resident_id, plate_filename, face_filename, scene_filename),
+    )
+
+    return {
+        "ok": True,
+        "mode": mode,
+        "matched_resident_id": resident_id,
+        "plate_image": plate_filename,
+        "face_image": face_filename,
+        "scene_image": scene_filename,
+    }
+>>>>>>> 6605a310cd2290368913826b011a34b3351b204b
 
 
 if __name__ == "__main__":
