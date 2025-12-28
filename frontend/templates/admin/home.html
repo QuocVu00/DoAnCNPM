@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Trang chủ quản trị Smart Parking{% endblock %}
+
+{% block head %}
+<style>
+  .stat-card-link {
+    text-decoration: none;
+    color: inherit;
+  }
+  .stat-card {
+    border-radius: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+  }
+  .stat-value {
+    font-size: 2.25rem;
+    font-weight: 700;
+  }
+  .stat-label {
+    text-transform: uppercase;
+    font-size: 0.8rem;
+    letter-spacing: 0.08em;
+    color: #6c757d;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-xxl">
+
+  <!-- TIÊU ĐỀ GIỮA TRANG -->
+  <div class="text-center mb-4">
+    <h1 class="fw-bold">
+      🏙️ Trang chủ quản trị Smart Parking
+    </h1>
+  </div>
+
+  <!-- HÀNG THỐNG KÊ CHÍNH -->
+  <div class="row g-3 mb-4">
+
+    <!-- 1. TỔNG SỐ CƯ DÂN (click -> DS cư dân) -->
+    <div class="col-md-4">
+      <a href="{{ url_for('admin_residents') }}" class="stat-card-link">
+        <div class="card stat-card h-100">
+          <div class="card-body d-flex align-items-center justify-content-between">
+            <div>
+              <div class="stat-label">Tổng số cư dân</div>
+              <div class="stat-value text-primary">
+                {{ stats.total_residents }}
+              </div>
+            </div>
+            <div class="display-5">👥</div>
+          </div>
+        </div>
+      </a>
+    </div>
+
+    <!-- 2. KHÁCH NGOÀI HÔM NAY (click -> Khách ngoài) -->
+    <div class="col-md-4">
+      <a href="{{ url_for('admin_guests') }}" class="stat-card-link">
+        <div class="card stat-card h-100">
+          <div class="card-body d-flex align-items-center justify-content-between">
+            <div>
+              <div class="stat-label">Khách ngoài hôm nay</div>
+              <div class="stat-value text-success">
+                {{ stats.total_guests_today }}
+              </div>
+            </div>
+            <div class="display-5">🚗</div>
+          </div>
+        </div>
+      </a>
+    </div>
+
+    <!-- 3. XE ĐANG Ở BÃI (click -> DS xe đang ở bãi) -->
+    <div class="col-md-4">
+      <a href="{{ url_for('admin_active_vehicles') }}" class="stat-card-link">
+        <div class="card stat-card h-100">
+          <div class="card-body d-flex align-items-center justify-content-between">
+            <div>
+              <div class="stat-label">Xe đang ở bãi</div>
+              <div class="stat-value text-warning">
+                {{ stats.active_vehicles }}
+              </div>
+            </div>
+            <div class="display-5">🅿️</div>
+          </div>
+        </div>
+      </a>
+    </div>
+
+  </div>
+
+  <!-- BIỂU ĐỒ -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header fw-semibold">
+          📊 Doanh thu 7 ngày gần nhất
+        </div>
+        <div class="card-body">
+          <canvas id="revenueChart" height="180"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header fw-semibold">
+          🚗 Lượt xe ra/vào 7 ngày gần nhất
+        </div>
+        <div class="card-body">
+          <canvas id="trafficChart" height="180"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- THÔNG BÁO HỆ THỐNG (KHÔNG CÒN CỘT GHI CHÚ NHANH) -->
+  <div class="card mb-4">
+    <div class="card-header fw-semibold">
+      🔔 Thông báo hệ thống
+    </div>
+    <div class="card-body">
+      {% if notifications %}
+        <ul class="list-group list-group-flush">
+          {% for n in notifications %}
+            <li class="list-group-item">
+              <div class="d-flex justify-content-between">
+                <div>
+                  {% if n.level == 'warning' %}
+                    <span class="badge bg-warning text-dark me-2">Cảnh báo</span>
+                  {% elif n.level == 'success' %}
+                    <span class="badge bg-success me-2">Thành công</span>
+                  {% else %}
+                    <span class="badge bg-info text-dark me-2">Thông tin</span>
+                  {% endif %}
+                  <strong>{{ n.title }}</strong>
+                </div>
+                <small class="text-muted">{{ n.time }}</small>
+              </div>
+              <div class="mt-1 text-muted small">
+                {{ n.message }}
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-muted mb-0">Hiện chưa có thông báo nào.</p>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  // Data từ server
+  const revenueLabels = {{ revenue_labels | tojson | safe }};
+  const revenueValues = {{ revenue_values | tojson | safe }};
+  const trafficLabels = {{ traffic_labels | tojson | safe }};
+  const trafficIn     = {{ traffic_in | tojson | safe }};
+  const trafficOut    = {{ traffic_out | tojson | safe }};
+
+  // Biểu đồ doanh thu
+  const ctxRevenue = document.getElementById('revenueChart');
+  if (ctxRevenue) {
+    new Chart(ctxRevenue, {
+      type: 'line',
+      data: {
+        labels: revenueLabels,
+        datasets: [{
+          label: 'Doanh thu (VNĐ)',
+          data: revenueValues,
+          fill: false,
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: true }
+        },
+        scales: {
+          y: {
+            beginAtZero: true
+          }
+        }
+      }
+    });
+  }
+
+  // Biểu đồ lượt xe
+  const ctxTraffic = document.getElementById('trafficChart');
+  if (ctxTraffic) {
+    new Chart(ctxTraffic, {
+      type: 'line',
+      data: {
+        labels: trafficLabels,
+        datasets: [
+          {
+            label: 'Xe vào',
+            data: trafficIn,
+            fill: false,
+            tension: 0.3
+          },
+          {
+            label: 'Xe ra',
+            data: trafficOut,
+            fill: false,
+            tension: 0.3
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: true }
+        },
+        scales: {
+          y: {
+            beginAtZero: true
+          }
+        }
+      }
+    });
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,381 @@
+{% extends "base.html" %}
+{% block title %}Trạm cổng – AI nhận diện biển số tự động{% endblock %}
+
+{% block head %}
+  {{ super() }}
+  <style>
+    .gate-page {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .gate-page h3 {
+      margin-bottom: 0.75rem;
+    }
+
+    .gate-page p.text-muted {
+      margin-bottom: 0.75rem;
+    }
+
+    .gate-card video {
+      width: 100%;
+      max-height: 380px;
+      border-radius: 0.5rem;
+      background: #000;
+      object-fit: cover;
+    }
+
+    .gate-card canvas {
+      display: none;
+    }
+
+    .gate-page .card-body {
+      padding: 0.75rem 1rem;
+    }
+
+    .gate-page .card-header {
+      padding: 0.5rem 1rem;
+    }
+
+    .gate-page .card-footer {
+      padding: 0.5rem 1rem 0.75rem 1rem;
+    }
+
+    /* Overlay mã vé to */
+    #ticket-overlay {
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 1050;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+<div class="gate-page py-4">
+  <h2 class="text-center mb-3">
+    🚗 Trạm cổng – AI nhận diện biển số tự động
+  </h2>
+  <p class="text-center text-muted mb-4">
+    Xe dừng tại vạch, hệ thống tự chụp biển số, phân loại <strong>cư dân / khách ngoài</strong>,
+    và điều hướng sang bước <strong>FaceID</strong> hoặc <strong>mã vé 6 số</strong>.
+  </p>
+
+  <div class="row">
+    <!-- Cột trái: Camera biển số -->
+    <div class="col-lg-7 mb-3">
+      <div class="card gate-card">
+        <div class="card-header">
+          <strong>Camera biển số</strong>
+        </div>
+        <div class="card-body">
+          <video id="camera-video" autoplay playsinline></video>
+          <canvas id="camera-canvas"></canvas>
+        </div>
+        <div class="card-footer d-flex justify-content-between gap-2">
+          <button id="btn-start" class="btn btn-primary flex-grow-1">
+            Bật camera &amp; AI tự động
+          </button>
+          <button id="btn-stop" class="btn btn-outline-danger flex-grow-1">
+            Dừng hệ thống
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cột phải: Trạng thái + Mã vé -->
+    <div class="col-lg-5 mb-3">
+      <!-- Trạng thái xử lý -->
+      <div class="card mb-3">
+        <div class="card-header">
+          <strong>Trạng thái xử lý</strong>
+        </div>
+        <div class="card-body">
+          <div id="gate-status-box" class="alert alert-info mb-2">
+            <p id="gate-status-text" class="mb-0">
+              Hệ thống sẵn sàng. Hãy bấm <strong>Bật camera &amp; AI tự động</strong>.
+            </p>
+          </div>
+          <small class="text-muted d-block">
+            Thông tin debug (developer) sẽ hiện trong console trình duyệt và log server.
+          </small>
+        </div>
+      </div>
+
+      <!-- Nhập biển số & mã vé -->
+      <div class="card">
+        <div class="card-header">
+          <strong>Mã vé / Mã dự phòng</strong>
+        </div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label class="form-label">Nhập tay biển số (nếu AI đọc không được)</label>
+            <input
+              type="text"
+              id="manual-plate-input"
+              class="form-control"
+              placeholder="VD: 59A-123.45"
+            >
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Vui lòng nhập mã vé 6 số để lấy xe ra.</label>
+            <div class="input-group">
+              <input
+                type="text"
+                id="ticket-code-input"
+                class="form-control"
+                maxlength="6"
+                placeholder="Nhập mã vé 6 số"
+              >
+              <button id="btn-confirm-ticket" class="btn btn-primary">
+                Xác nhận mã vé
+              </button>
+            </div>
+            <small class="text-muted d-block mt-1">
+              Sai quá <strong>3 lần</strong> hệ thống sẽ hiển thị cảnh báo cho nhân viên trực.
+            </small>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Overlay hiển thị mã vé to 20 giây cho khách ngoài -->
+<div
+  id="ticket-overlay"
+  class="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center d-none"
+>
+  <div class="bg-white p-4 rounded shadow text-center" style="min-width: 320px;">
+    <h3 class="mb-3">Mã vé của bạn</h3>
+    <div id="ticket-overlay-text" class="fw-bold display-4 text-primary"></div>
+    <p class="mt-3 mb-0">
+      Vui lòng ghi nhớ / chụp lại mã này để xuất trình khi lấy xe ra.
+    </p>
+  </div>
+</div>
+
+<script>
+  const video = document.getElementById("camera-video");
+  const canvas = document.getElementById("camera-canvas");
+  const btnStart = document.getElementById("btn-start");
+  const btnStop = document.getElementById("btn-stop");
+  const btnConfirmTicket = document.getElementById("btn-confirm-ticket");
+
+  const statusBox = document.getElementById("gate-status-box");
+  const statusText = document.getElementById("gate-status-text");
+  const manualPlateInput = document.getElementById("manual-plate-input");
+  const ticketInput = document.getElementById("ticket-code-input");
+
+  const overlay = document.getElementById("ticket-overlay");
+  const overlayText = document.getElementById("ticket-overlay-text");
+
+  let mediaStream = null;
+  let captureTimer = null;
+  let isRunning = false;
+
+  async function startCamera() {
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+        audio: false,
+      });
+      video.srcObject = mediaStream;
+    } catch (err) {
+      console.error("Không truy cập được camera:", err);
+      statusBox.className = "alert alert-danger";
+      statusText.innerText = "Không truy cập được camera: " + err.message;
+    }
+  }
+
+  function stopCamera() {
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+    }
+    video.srcObject = null;
+  }
+
+  function startSystem() {
+    if (isRunning) return;
+    isRunning = true;
+
+    statusBox.className = "alert alert-info";
+    statusText.innerText = "Hệ thống đang chạy, AI sẽ tự chụp biển số liên tục...";
+
+    startCamera();
+
+    // 2 giây chụp & gửi 1 lần
+    captureTimer = setInterval(() => {
+      captureAndSend(false);
+    }, 2000);
+  }
+
+  function stopSystem() {
+    isRunning = false;
+    if (captureTimer) {
+      clearInterval(captureTimer);
+      captureTimer = null;
+    }
+    stopCamera();
+
+    statusBox.className = "alert alert-secondary";
+    statusText.innerText = "Hệ thống đã dừng. Bạn có thể bấm Bật camera để chạy lại.";
+  }
+
+  function showOverlay(code) {
+    if (!overlay || !overlayText) return;
+    overlayText.innerText = code || "";
+    overlay.classList.remove("d-none");
+
+    // 20 giây sau tự ẩn
+    setTimeout(() => {
+      overlay.classList.add("d-none");
+    }, 20000);
+  }
+
+  function updateStatusUI(data) {
+    console.log("gate_capture resp:", data);
+
+    // Mặc định ẩn overlay
+    if (overlay) overlay.classList.add("d-none");
+
+    if (!data || data.ok === false) {
+      statusBox.className = "alert alert-danger";
+      statusText.innerText = (data && data.message) ?
+        data.message : "Lỗi trong quá trình xử lý. Vui lòng thử lại.";
+      return;
+    }
+
+    // ====== XE CƯ DÂN VÀO BÃI ======
+    if (data.user_type === "resident" && data.event_type === "resident_in") {
+      statusBox.className = "alert alert-success";
+      statusText.innerText = data.message || "Xe cư dân đã vào bãi.";
+      return;
+    }
+
+    // ====== XE CƯ DÂN RA BÃI -> CHUYỂN SANG FACE ======
+    if (data.user_type === "resident" && data.next_step === "face") {
+      statusBox.className = "alert alert-info";
+      statusText.innerText =
+        data.message || "Chuyển sang bước xác thực khuôn mặt...";
+
+      const url =
+        `/gate/face?resident_id=${data.resident_id}` +
+        `&plate_text=${encodeURIComponent(data.plate_text || "")}` +
+        `&mode=${data.mode || "OUT"}`;
+      window.location.href = url;
+      return;
+    }
+
+    // ====== KHÁCH VÃNG LAI VÀO BÃI (TẠO VÉ) ======
+    if (data.user_type === "guest" && data.event_type === "guest_in") {
+      statusBox.className = "alert alert-success";
+      const code = data.ticket_code || "";
+      statusText.innerText =
+        data.message ||
+        `Xe khách đã vào bãi. Mã vé của bạn là ${code}.`;
+
+      if (ticketInput && code) {
+        ticketInput.value = code;
+      }
+
+      if (code) {
+        showOverlay(code);
+      }
+      return;
+    }
+
+    // ====== KHÁCH VÃNG LAI RA BÃI (ĐÃ NHẬP ĐÚNG MÃ VÉ) ======
+    if (data.user_type === "guest" && data.event_type === "guest_out") {
+      statusBox.className = "alert alert-success";
+      statusText.innerText = data.message || "Xe khách đã ra bãi.";
+      return;
+    }
+
+    // ====== Trường hợp yêu cầu nhập hoặc nhập sai mã vé ======
+    if (data.need_ticket_code) {
+      statusBox.className = "alert alert-warning";
+      statusText.innerText =
+        data.message ||
+        "Vui lòng nhập mã vé 6 số được cấp khi gửi xe.";
+      if (data.plate_text && !manualPlateInput.value) {
+        manualPlateInput.value = data.plate_text;
+      }
+      return;
+    }
+
+    // Mặc định
+    statusBox.className = "alert alert-info";
+    statusText.innerText = data.message || "Đã xử lý xong.";
+  }
+
+  async function captureAndSend(forceOnce) {
+    try {
+      if (!video || video.readyState < 2) {
+        // Video chưa sẵn sàng
+        return;
+      }
+
+      const w = video.videoWidth || 640;
+      const h = video.videoHeight || 480;
+
+      canvas.width = w;
+      canvas.height = h;
+
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, w, h);
+
+      const dataUrl = canvas.toDataURL("image/png");
+
+      const payload = {
+        mode: "AUTO",
+        plate_image: dataUrl,
+        face_image: null,
+        scene_image: null,
+        guest_ticket_code: (ticketInput.value || "").trim() || null,
+        plate_text_manual: (manualPlateInput.value || "").trim() || null,
+      };
+
+      const resp = await fetch("/gate/capture", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await resp.json();
+      updateStatusUI(data);
+
+      // Nếu lần này chỉ gửi để xác nhận mã vé (forceOnce) → không cần lặp
+      if (forceOnce) {
+        console.log("Sent one-time capture for ticket confirm.");
+      }
+    } catch (err) {
+      console.error("Lỗi khi chụp & gửi:", err);
+      statusBox.className = "alert alert-danger";
+      statusText.innerText = "Lỗi khi chụp & gửi: " + err.message;
+    }
+  }
+
+  // ===== Gắn event =====
+  btnStart.addEventListener("click", (e) => {
+    e.preventDefault();
+    startSystem();
+  });
+
+  btnStop.addEventListener("click", (e) => {
+    e.preventDefault();
+    stopSystem();
+  });
+
+  // Khi ấn "Xác nhận mã vé" => chụp 1 frame & gửi kèm mã vé hiện tại
+  btnConfirmTicket.addEventListener("click", (e) => {
+    e.preventDefault();
+    // gửi 1 lần, không cần bật auto
+    if (!mediaStream) {
+      startCamera().then(() => captureAndSend(true));
+    } else {
+      captureAndSend(true);
+    }
+  });
+</script>
+{% endblock %}

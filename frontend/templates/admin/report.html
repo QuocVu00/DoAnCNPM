@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Báo cáo doanh thu{% endblock %}
+
+{% block content %}
+<h3 class="mb-3">Báo cáo doanh thu khách ngoài</h3>
+
+<form class="row mb-3" method="get" action="{{ url_for('admin_report_page') }}">
+  <div class="col-md-4">
+    <label class="form-label">Chọn ngày</label>
+    <input
+      type="date"
+      name="date"
+      class="form-control"
+      value="{{ today }}"
+    />
+  </div>
+  <div class="col-md-4 d-flex align-items-end">
+    <button class="btn btn-primary" type="submit">
+      Xem báo cáo
+    </button>
+  </div>
+</form>
+
+{% if summary %}
+  <div class="alert alert-info mb-3">
+    Ngày: <b>{{ summary.date }}</b> &nbsp;|&nbsp;
+    Số lượt khách ngoài: <b>{{ summary.guest_count }}</b> &nbsp;|&nbsp;
+    Doanh thu: <b>{{ "{:,.0f}".format(summary.total_fee) }} VNĐ</b>
+  </div>
+{% else %}
+  <div class="alert alert-secondary mb-3">
+    Chưa có dữ liệu báo cáo cho ngày đã chọn.
+  </div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Chi tiết vé khách ngoài trong ngày</span>
+    <!-- Nút "Xuất chi tiết" chỉ là nút cuộn xuống bảng, không gọi API nữa -->
+    <a href="#report-detail-table" class="btn btn-outline-secondary btn-sm">
+      Xuất chi tiết
+    </a>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-striped table-hover table-sm mb-0" id="report-detail-table">
+        <thead class="table-light">
+          <tr>
+            <th>#</th>
+            <th>Biển số</th>
+            <th>Mã vé</th>
+            <th>Giờ vào</th>
+            <th>Giờ ra</th>
+            <th>Tiền (VNĐ)</th>
+            <th>Trạng thái</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if guests and guests|length > 0 %}
+            {% for g in guests %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ g.plate_number }}</td>
+                <td>{{ g.ticket_code }}</td>
+                <td>{{ g.checkin_time }}</td>
+                <td>{{ g.checkout_time or "-" }}</td>
+                <td>{{ "{:,.0f}".format(g.amount or 0) }}</td>
+                <td>
+                  {% if g.status == "IN" %}
+                    <span class="badge bg-success">Đang gửi</span>
+                  {% elif g.status == "OUT" %}
+                    <span class="badge bg-secondary">Đã ra</span>
+                  {% else %}
+                    <span class="badge bg-light text-dark">{{ g.status }}</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="7" class="text-center text-muted py-3">
+                Không có dữ liệu trong ngày này.
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{# Không cần admin.js nữa vì đã render server-side #}
+{% endblock %}

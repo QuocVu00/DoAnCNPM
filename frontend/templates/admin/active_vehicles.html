@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Xe đang ở bãi - Smart Parking{% endblock %}
+
+{% block content %}
+<h3 class="mb-3 d-flex align-items-center">
+  <span style="font-size: 1.8rem; margin-right: 0.5rem;">🅿️</span>
+  <span>Danh sách xe đang ở bãi</span>
+</h3>
+
+<div class="card shadow-sm border-0">
+  <div class="card-body">
+    {% if vehicles and vehicles|length > 0 %}
+      <div class="table-responsive">
+        <table class="table table-striped align-middle">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Loại</th>
+              <th>Biển số</th>
+              <th>Loại xe</th>
+              <th>Chủ xe</th>
+              <th>Vị trí / Phòng</th>
+              <th>Thời gian vào (khách ngoài)</th>
+              <th>Mã vé</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for v in vehicles %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td>
+                  {% if v.source == 'resident' %}
+                    <span class="badge bg-primary">Cư dân</span>
+                  {% else %}
+                    <span class="badge bg-success">Khách ngoài</span>
+                  {% endif %}
+                </td>
+                <td><strong>{{ v.plate_number or '-' }}</strong></td>
+                <td>{{ v.vehicle_type or '-' }}</td>
+                <td>{{ v.owner_name or '-' }}</td>
+                <td>{{ v.location or '-' }}</td>
+                <td>{{ v.checkin_display or '-' }}</td>
+                <td>{{ v.ticket_code or '-' }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="text-muted mb-0">
+        Hiện tại không có xe nào đang ở trong bãi.
+      </p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Quản lý khách ngoài{% endblock %}
+
+{% block content %}
+<h3 class="mb-3">Quản lý xe khách ngoài</h3>
+
+<!-- Form lọc theo ngày -->
+<div class="card mb-3">
+  <div class="card-header">Lọc dữ liệu</div>
+  <div class="card-body">
+    <form method="get" action="{{ url_for('admin_guests') }}" class="row g-3">
+      <div class="col-md-3">
+        <label class="form-label">Ngày</label>
+        <input
+          type="date"
+          name="date"
+          class="form-control"
+          value="{{ selected_date }}"
+        >
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Biển số</label>
+        <input
+          type="text"
+          name="plate"
+          class="form-control"
+          placeholder="VD: 59A12345"
+        >
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Mã vé</label>
+        <input
+          type="text"
+          name="ticket_code"
+          class="form-control"
+          placeholder="6 số"
+        >
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Trạng thái</label>
+        <select name="status" class="form-select">
+          <option value="">-- Tất cả --</option>
+          <option value="IN">Đang gửi</option>
+          <option value="OUT">Đã ra</option>
+        </select>
+      </div>
+
+      <div class="col-12">
+        <button type="submit" class="btn btn-primary">Lọc</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Danh sách vé khách ngoài -->
+<div class="card">
+  <div class="card-header">Danh sách vé khách ngoài</div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-striped table-hover table-sm mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>#</th>
+            <th>Biển số</th>
+            <th>Mã vé</th>
+            <th>Giờ vào</th>
+            <th>Giờ ra</th>
+            <th>Thời gian gửi (giờ)</th>
+            <th>Tiền (VNĐ)</th>
+            <th>Trạng thái</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if guests and guests|length > 0 %}
+            {% for g in guests %}
+            <tr>
+              <td>{{ loop.index }}</td>
+              <td>{{ g.plate_number }}</td>
+              <td>{{ g.ticket_code }}</td>
+              <td>{{ g.checkin_time }}</td>
+              <td>{{ g.checkout_time or '-' }}</td>
+              <td>{{ "%.2f"|format(g.hours or 0) }}</td>
+              <td>{{ "{:,}".format(g.amount or 0) }}</td>
+              <td>
+                {% if g.status == 'IN' %}
+                  <span class="badge bg-success">Đang gửi</span>
+                {% elif g.status == 'OUT' %}
+                  <span class="badge bg-secondary">Đã ra</span>
+                {% else %}
+                  <span class="badge bg-light text-dark">{{ g.status }}</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="8" class="text-center text-muted py-3">
+                Không có dữ liệu cho bộ lọc hiện tại.
+              </td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

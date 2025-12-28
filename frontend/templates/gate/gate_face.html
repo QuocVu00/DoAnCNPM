@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% block title %}Trạm FaceID cư dân{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+  .face-video {
+    width: 100%;
+    max-height: 380px;
+    border-radius: 0.5rem;
+    background: #000;
+    object-fit: cover;
+  }
+  .big-message {
+    font-size: 1.4rem;
+    font-weight: 600;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+
+  <!-- metadata cho JS -->
+  <div id="faceMeta"
+       data-resident-id="{{ resident_id or '' }}"
+       data-plate-text="{{ plate_text or '' }}"
+       data-mode="{{ mode or 'AUTO' }}">
+  </div>
+
+  <h3 class="mb-3 text-center fw-bold">
+    😃 Trạm FaceID cư dân
+  </h3>
+  <p class="text-muted text-center small mb-4">
+    Xe đã được nhận diện là <strong>cư dân</strong> (biển số:
+    <strong>{{ plate_text or 'không rõ' }}</strong>).
+    Mời tài xế đưa khuôn mặt vào đúng vị trí camera để xác thực.
+  </p>
+
+  <div class="row g-3">
+    <!-- Camera -->
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header">
+          Camera khuôn mặt
+        </div>
+        <div class="card-body text-center">
+          <video id="videoFace" autoplay playsinline class="face-video"></video>
+          <canvas id="canvasFace" class="d-none"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Thông tin + điều khiển -->
+    <div class="col-md-6">
+      <div class="card mb-3">
+        <div class="card-header">
+          Thông tin lượt xe
+        </div>
+        <div class="card-body">
+          <p class="mb-1">
+            <strong>Resident ID:</strong> {{ resident_id or 'N/A' }}<br>
+            <strong>Biển số:</strong> {{ plate_text or 'N/A' }}<br>
+            <strong>Chế độ:</strong>
+            {% if mode == 'OUT' %}
+              Ra bãi (Check-out)
+            {% elif mode == 'IN' %}
+              Vào bãi (Check-in)
+            {% else %}
+              Tự động (AUTO)
+            {% endif %}
+          </p>
+          <hr>
+
+          <div class="mb-2">
+            <label class="form-label mb-1">Kết quả nhận diện khuôn mặt</label><br>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="faceResult"
+                     id="faceOk" value="ok" checked>
+              <label class="form-check-label" for="faceOk">
+                Hệ thống nhận diện đúng (cho xe qua)
+              </label>
+            </div>
+            <div class="form-check form-check-inline">
+              <input class="form-check-input" type="radio" name="faceResult"
+                     id="faceFail" value="fail">
+              <label class="form-check-label" for="faceFail">
+                Không nhận diện được (dùng mã 6 số)
+              </label>
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label" for="backupCode">
+              Mã dự phòng cư dân (6 số – dùng khi FaceID lỗi)
+            </label>
+            <input type="text" id="backupCode" class="form-control"
+                   maxlength="6"
+                   placeholder="Nhập mã 6 số cư dân...">
+            <small class="text-muted">
+              Nếu chụp sai mặt nhiều lần, bảo vệ yêu cầu cư dân nhập đúng mã này để cho xe ra/vào.
+            </small>
+          </div>
+
+          <div class="mt-3 d-flex gap-2">
+            <button class="btn btn-secondary flex-grow-1" type="button" id="btnStartFace">
+              Bật camera
+            </button>
+            <button class="btn btn-primary flex-grow-1" type="button" id="btnCaptureFace">
+              Chụp &amp; xác thực
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">Trạng thái</div>
+        <div class="card-body">
+          <div id="faceStatus" class="alert alert-info big-message mb-2">
+            Chưa bật camera.
+          </div>
+          <div id="faceDebug" class="small text-muted"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+(function () {
+  const metaDiv   = document.getElementById("faceMeta");
+  const residentId = metaDiv.dataset.residentId || null;
+  const plateText  = metaDiv.dataset.plateText || null;
+  const mode       = metaDiv.dataset.mode || "AUTO";
+
+  const video  = document.getElementById("videoFace");
+  const canvas = document.getElementById("canvasFace");
+  const btnStart   = document.getElementById("btnStartFace");
+  const btnCapture = document.getElementById("btnCaptureFace");
+  const statusBox  = document.getElementById("faceStatus");
+  const debugBox   = document.getElementById("faceDebug");
+  const backupCodeEl = document.getElementById("backupCode");
+
+  let stream = null;
+  let attemptCount = 0;
+  const MAX_ATTEMPTS = 3;
+
+  async function startCamera() {
+    if (stream) return;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false
+      });
+      video.srcObject = stream;
+
+      statusBox.className = "alert alert-success big-message";
+      statusBox.textContent = "Camera đã bật – mời cư dân đưa khuôn mặt vào khung hình.";
+    } catch (err) {
+      console.error(err);
+      statusBox.className = "alert alert-danger big-message";
+      statusBox.textContent = "Không bật được camera: " + err.message;
+    }
+  }
+
+  function captureFrame() {
+    if (!video || video.readyState < 2) return null;
+
+    const width  = video.videoWidth  || 640;
+    const height = video.videoHeight || 480;
+
+    canvas.width  = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, width, height);
+    return canvas.toDataURL("image/png");
+  }
+
+  async function captureAndSendFace() {
+    if (!stream) {
+      statusBox.className = "alert alert-warning big-message";
+      statusBox.textContent = "Hãy bật camera trước khi chụp.";
+      return;
+    }
+
+    const dataUrl = captureFrame();
+    if (!dataUrl) {
+      statusBox.className = "alert alert-warning big-message";
+      statusBox.textContent = "Không lấy được khung hình, thử lại.";
+      return;
+    }
+
+    const faceResult = document.querySelector('input[name="faceResult"]:checked').value;
+    const faceOk = (faceResult === "ok");
+    const backupCode = (backupCodeEl.value || "").trim() || null;
+
+    statusBox.className = "alert alert-info big-message";
+    statusBox.textContent = "Đang gửi ảnh khuôn mặt lên server...";
+
+    try {
+      const resp = await fetch("/gate/face/capture", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resident_id: residentId,
+          plate_text: plateText,
+          mode: mode,
+          face_image: dataUrl,
+          scene_image: null,
+          face_ok: faceOk,
+          backup_code: backupCode
+        })
+      });
+
+      const data = await resp.json();
+      debugBox.textContent = JSON.stringify(data, null, 2);
+
+      if (data.ok) {
+        // Xác thực thành công -> cho xe qua & tạm biệt
+        statusBox.className = "alert alert-success big-message";
+        statusBox.textContent =
+          data.message ||
+          "Cư dân đã được xác thực, barie mở. Xin chúc quý khách thượng lộ bình an!";
+
+        // Có thể dừng camera cho đẹp
+        if (stream) {
+          stream.getTracks().forEach(t => t.stop());
+          stream = null;
+        }
+      } else {
+        // Cần nhập / nhập sai mã 6 số
+        attemptCount += 1;
+
+        let msg = data.message || "Không xác thực được khuôn mặt.";
+        if (data.need_backup_code) {
+          msg += " Vui lòng nhập đúng mã 6 số cư dân.";
+        }
+
+        if (attemptCount >= MAX_ATTEMPTS) {
+          msg = "Sai quá 3 lần trong thời gian ngắn – hệ thống đã cảnh báo. "
+              + "Vui lòng nhập đúng mã dự phòng hoặc liên hệ bảo vệ.";
+        }
+
+        statusBox.className = "alert alert-warning big-message";
+        statusBox.textContent = msg;
+      }
+    } catch (err) {
+      console.error(err);
+      statusBox.className = "alert alert-danger big-message";
+      statusBox.textContent = "Lỗi khi gửi dữ liệu: " + err.message;
+    }
+  }
+
+  btnStart.addEventListener("click", startCamera);
+  btnCapture.addEventListener("click", captureAndSendFace);
+})();
+</script>
+{% endblock %}
