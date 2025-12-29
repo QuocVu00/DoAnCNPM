@@ -1,0 +1,100 @@
+.gate-body{ background:#f4f7fb; overflow:hidden; }
+.gate-main{ height:100vh; padding:14px; }
+.gate-wrap{
+  height: calc(100vh - 28px);
+  max-width: 1150px;
+  margin: 0 auto;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.gate-hero{
+  border-radius:16px;
+  padding:14px 16px;
+  color:#fff;
+  background: linear-gradient(90deg,#1f6feb,#14b8a6);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.gate-hero .left{ display:flex; align-items:center; gap:12px; }
+.gate-hero h1{ font-size:22px; margin:0; font-weight:900; letter-spacing:.2px; }
+.gate-hero p{ margin:2px 0 0 0; opacity:.92; font-size:13px; }
+.gate-hero .meta{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+.gate-status{
+  border-radius:14px;
+  padding:10px 12px;
+  background:#e6fbff;
+  border:1px solid rgba(0,0,0,.06);
+  font-weight:800;
+}
+
+.gate-grid{
+  flex:1;
+  min-height:0;
+  display:grid;
+  grid-template-columns: 1.35fr .65fr;
+  gap:10px;
+}
+
+.gcard{
+  background:#fff;
+  border:1px solid rgba(0,0,0,.08);
+  border-radius:16px;
+  overflow:hidden;
+  min-height:0;
+}
+.gcard-h{
+  padding:10px 12px;
+  border-bottom:1px solid rgba(0,0,0,.06);
+  font-weight:900;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.gcard-b{ padding:10px 12px; min-height:0; }
+
+.video-shell{
+  height:100%;
+  min-height:0;
+  border-radius:14px;
+  overflow:hidden;
+  background:#000;
+}
+.video-shell video{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+.side-stack{
+  height:100%;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.lock-box{
+  border:1px solid rgba(220,53,69,.3);
+  background:#fff5f5;
+  border-radius:14px;
+  padding:10px 12px;
+}
+
+.big-status{
+  border-radius:14px;
+  padding:10px 12px;
+  font-weight:900;
+  display:none;
+}
+.big-status.show{ display:block; }
+
+@media (max-width: 992px){
+  .gate-grid{ grid-template-columns:1fr; }
+  .gate-main{ overflow:auto; }
+  .gate-body{ overflow:auto; }
+}

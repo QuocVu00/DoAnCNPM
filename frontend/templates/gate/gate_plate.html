@@ -1,59 +1,108 @@
-{% extends "base.html" %}
+{% extends "base_gate.html" %}
 {% block title %}Trạm cổng – Quét biển số{% endblock %}
 
 {% block head %}
   {{ super() }}
   <style>
-    .gate-wrap{max-width:1100px;margin:0 auto}
-    .gate-hero{
-      background: linear-gradient(135deg,#2563eb,#10b981);
-      color:#fff;border-radius:16px;padding:18px 20px;
-      display:flex;align-items:center;justify-content:space-between;gap:12px
-    }
-    .gate-hero h3{margin:0;font-weight:800}
-    .gate-hero p{margin:0;opacity:.95}
-    .gate-card video{width:100%;max-height:420px;border-radius:14px;background:#000;object-fit:cover}
-    .big-status{
-      border-radius:14px;padding:16px 18px;font-size:20px;font-weight:800;
-      display:none;
-    }
-    .big-status.show{display:block}
-    .lock-box{
-      border:2px dashed #dc3545;border-radius:14px;padding:14px 16px;background:#fff5f5
-    }
+    /* chỉnh nhỏ thêm chút để fit 1 màn hình */
+    .gate-status { font-size: 16px; }
+    .btn-sm { white-space: nowrap; }
   </style>
 {% endblock %}
 
 {% block content %}
-<div class="container py-4 gate-wrap">
-  <div class="gate-hero mb-3">
-    <div>
-      <h3>TRẠM CỔNG – QUÉT BIỂN SỐ</h3>
-      <p>Camera tự động bật và tự nhận diện liên tục</p>
+<div class="gate-wrap">
+
+  <!-- ✅ Header mới: bỏ badge "Gate" -->
+  <div class="gate-hero">
+    <div class="left">
+      <span class="badge bg-dark">KIOSK</span>
+      <div>
+        <h1>TRẠM CỔNG – QUÉT BIỂN SỐ</h1>
+        <p>Camera tự động bật và tự nhận diện liên tục</p>
+      </div>
     </div>
-    <div class="text-end">
-      <div class="badge bg-dark">Gate</div>
+    <div class="meta">
+      <span class="badge bg-success">ONLINE</span>
+      <button class="btn btn-light btn-sm" type="button" id="btn-reload">Làm mới</button>
     </div>
   </div>
 
   {% if gate_locked %}
-  <div class="lock-box mb-3">
+  <div class="lock-box">
     <div class="fw-bold text-danger">⚠ Trạm đang bị khóa</div>
     <div>Do khách nhập sai mã vé quá 3 lần. Chỉ Admin mới mở khóa được.</div>
 
     {% if session.get("role") == "admin" %}
-    <button id="btn-unlock" class="btn btn-danger mt-2">Mở khóa trạm</button>
-    <div id="unlock-msg" class="mt-2 text-success fw-bold" style="display:none;">Đã mở khóa! Reload trang để chạy lại.</div>
+    <div class="mt-2 d-flex gap-2 flex-wrap">
+      <button id="btn-unlock" class="btn btn-danger btn-sm">Mở khóa trạm</button>
+      <div id="unlock-msg" class="text-success fw-bold" style="display:none;">
+        Đã mở khóa! Reload trang để chạy lại.
+      </div>
+    </div>
     {% endif %}
   </div>
   {% endif %}
 
+  <!-- Status -->
   <div id="status" class="big-status alert alert-info"></div>
 
-  <div class="card shadow-sm">
-    <div class="card-body">
-      <video id="cam" autoplay playsinline></video>
-      <canvas id="cv" style="display:none;"></canvas>
+  <div class="gate-grid">
+
+    <!-- Camera -->
+    <div class="gcard">
+      <div class="gcard-h">
+        <span>🎥 Camera</span>
+        <span class="text-muted" style="font-weight:700;font-size:12px;">Auto capture</span>
+      </div>
+      <div class="gcard-b" style="height:100%;min-height:0;">
+        <div class="video-shell" style="height:100%;min-height:0;">
+          <!-- giữ nguyên ID để không lỗi JS -->
+          <video id="cam" autoplay playsinline></video>
+          <canvas id="cv" style="display:none;"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel phải (thông tin gọn) -->
+    <div class="side-stack">
+
+      <div class="gcard">
+        <div class="gcard-h">
+          <span>📌 Trạng thái</span>
+        </div>
+        <div class="gcard-b">
+          <div class="alert alert-secondary mb-0" style="border-radius:14px;">
+            Hệ thống sẽ tự nhận diện mỗi ~1.2 giây và tự chuyển trang theo luồng.
+          </div>
+        </div>
+      </div>
+
+      <div class="gcard">
+        <div class="gcard-h">
+          <span>🛠 Điều khiển</span>
+        </div>
+        <div class="gcard-b">
+          <button class="btn btn-primary w-100" id="btn-capture" type="button">
+            Chụp & Nhận diện ngay
+          </button>
+          <small class="text-muted d-block mt-2">
+            * Dùng khi số lượng khách đông.
+          </small>
+        </div>
+      </div>
+
+      {% if gate_locked %}
+      <div class="gcard">
+        <div class="gcard-h"><span>🔒 Lưu ý</span></div>
+        <div class="gcard-b">
+          <div class="alert alert-warning mb-0" style="border-radius:14px;">
+            Trạm đang bị khóa nên hệ thống sẽ dừng quét để tránh spam request.
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
     </div>
   </div>
 </div>
@@ -103,19 +152,16 @@
 
       if (data && data.gate_locked){
         showStatus(data.message || "Trạm đang bị khóa.", "alert alert-danger");
-        // dừng loop để khỏi spam
         stopped = true;
         return;
       }
 
-      // redirect
       if (data && data.action === "redirect" && data.redirect_url){
         stopped = true;
         window.location.href = data.redirect_url;
         return;
       }
 
-      // nếu OCR fail thì thông báo nhẹ
       if (data && data.ok === false && data.message){
         showStatus(data.message, "alert alert-warning");
       }
@@ -129,11 +175,13 @@
   async function main(){
     try{
       await startCamera();
+
       {% if gate_locked %}
         showStatus("Trạm đang bị khóa. Chỉ Admin mới mở khóa.", "alert alert-danger");
         stopped = true;
         return;
       {% endif %}
+
       showStatus("Đang quét biển số…", "alert alert-info");
       setInterval(loopCapture, 1200);
     }catch(e){
@@ -142,6 +190,15 @@
   }
 
   main();
+
+  // Reload button
+  document.getElementById("btn-reload")?.addEventListener("click", () => location.reload());
+
+  // Manual capture
+  document.getElementById("btn-capture")?.addEventListener("click", async () => {
+    showStatus("Đang chụp & nhận diện…", "alert alert-info");
+    await loopCapture();
+  });
 
   // Admin unlock
   const btnUnlock = document.getElementById("btn-unlock");

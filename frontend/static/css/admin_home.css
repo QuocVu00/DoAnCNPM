@@ -1,0 +1,131 @@
+/* =========================
+   ADMIN HOME - FIT LAPTOP
+   ========================= */
+
+.page-wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+/* Giảm spacing chung */
+.mb-4 { margin-bottom: 1rem !important; }
+.mb-3 { margin-bottom: 0.75rem !important; }
+
+/* ===== Title ===== */
+.page-title {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .6rem .75rem;
+  border: 1px solid rgba(0,0,0,.06);
+  border-radius: 12px;
+  background: #fff;
+  margin-bottom: .75rem;
+}
+.page-title .icon {
+  font-size: 1.6rem;
+  line-height: 1;
+}
+.page-title .text {
+  font-size: 1.35rem;
+  font-weight: 800;
+  margin: 0;
+}
+
+/* ===== Stat cards ===== */
+.stat-card {
+  border: 1px solid rgba(0,0,0,.08);
+  border-radius: 14px;
+  transition: all .15s ease-in-out;
+}
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(0,0,0,.08);
+}
+.stat-card-link {
+  text-decoration: none;
+  color: inherit;
+}
+.stat-label {
+  font-size: 0.92rem;
+  color: #6c757d;
+  margin-bottom: .15rem;
+}
+.stat-value {
+  font-size: 1.7rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+.stat-icon {
+  font-size: 2rem;
+  opacity: .9;
+}
+.stat-card .card-body{
+  padding: .85rem 1rem;
+}
+
+/* ===== Card header/body gọn ===== */
+.card-header{
+  padding: .6rem .85rem;
+}
+.card-body{
+  padding: .75rem .85rem;
+}
+
+/* ===== Gate actions ===== */
+.gate-actions{
+  display:flex;
+  align-items:center;
+  gap:.5rem;
+  flex-wrap: wrap;
+}
+.gate-actions .btn,
+.gate-actions .badge{
+  white-space: nowrap;
+}
+
+/* ===== Charts ===== */
+.chart-card .card-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.chart-title{
+  display:flex;
+  align-items:center;
+  gap:.5rem;
+  font-weight:700;
+  font-size: .98rem;
+}
+.chart-card .card-body{
+  padding: .65rem .85rem;
+}
+
+/* Chiều cao chart cố định để vừa laptop */
+.chart-box{
+  height: 240px;
+  position: relative;
+}
+.chart-box canvas{
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ===== Alerts ===== */
+.alert{
+  padding: .65rem .85rem;
+  border-radius: 12px;
+  margin-bottom: 0;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 992px){
+  .page-wrap { max-width: 100%; padding: 0 .5rem; }
+  .page-title .text { font-size: 1.2rem; }
+  .chart-box { height: 220px; }
+}
+@media (max-width: 576px){
+  .stat-value { font-size: 1.5rem; }
+  .stat-icon { font-size: 1.8rem; }
+  .chart-box { height: 200px; }
+}

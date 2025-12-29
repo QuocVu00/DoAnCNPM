@@ -1,55 +1,98 @@
-{% extends "base.html" %}
+{% extends "base_gate.html" %}
 {% block title %}Trạm FaceID cư dân{% endblock %}
 
 {% block head %}
   {{ super() }}
   <style>
-    .wrap{max-width:1100px;margin:0 auto}
-    .hero{
-      background: linear-gradient(135deg,#111827,#2563eb);
-      color:#fff;border-radius:16px;padding:18px 20px;
-      display:flex;align-items:center;justify-content:space-between;gap:12px
-    }
-    .hero h3{margin:0;font-weight:800}
-    .hero p{margin:0;opacity:.9}
-    .card video{width:100%;max-height:420px;border-radius:14px;background:#000;object-fit:cover}
-    .status{border-radius:14px;padding:14px 16px;font-weight:800;font-size:18px}
-    .code-box{display:none}
-    .code-box.show{display:block}
+    .face-status{ font-size:16px; }
+    .btn-sm{ white-space:nowrap; }
   </style>
 {% endblock %}
 
 {% block content %}
-<div class="container py-4 wrap">
-  <div class="hero mb-3">
-    <div>
-      <h3>FACEID CƯ DÂN – XÁC THỰC KHI XE RA</h3>
-      <p>Hệ thống tự chụp & đối chiếu. Nếu sai sẽ yêu cầu mã 6 số.</p>
-    </div>
-    <div class="text-end">
-      <div class="badge bg-warning text-dark">Plate: {{ plate_text }}</div>
-    </div>
-  </div>
+<div class="gate-wrap">
 
-  <div id="status" class="status alert alert-info">Đang mở camera…</div>
-
-  <div class="card shadow-sm mb-3">
-    <div class="card-body">
-      <video id="cam" autoplay playsinline></video>
-      <canvas id="cv" style="display:none;"></canvas>
-    </div>
-  </div>
-
-  <div id="codeBox" class="code-box">
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <div class="fw-bold mb-2">Nhập mã 6 số (backup code)</div>
-        <div class="d-flex gap-2">
-          <input id="backup" class="form-control" placeholder="Nhập 6 số..." inputmode="numeric" maxlength="6">
-          <button id="btnSend" class="btn btn-primary">Gửi</button>
-        </div>
-        <div class="text-muted mt-2">Nhấn Enter để gửi nhanh.</div>
+  <!-- Header giống gate_plate -->
+  <div class="gate-hero">
+    <div class="left">
+      <span class="badge bg-dark">FACE ID</span>
+      <div>
+        <h1>XÁC THỰC KHUÔN MẶT CƯ DÂN</h1>
+        <p>Hệ thống tự chụp & đối chiếu khi xe ra</p>
       </div>
+    </div>
+    <div class="meta">
+      <span class="badge bg-warning text-dark">Plate: {{ plate_text }}</span>
+      <button class="btn btn-light btn-sm" type="button" id="btn-reload">Làm mới</button>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div id="status" class="big-status alert alert-info face-status">
+    Đang mở camera…
+  </div>
+
+  <div class="gate-grid">
+
+    <!-- Camera -->
+    <div class="gcard">
+      <div class="gcard-h">
+        <span>📷 Camera FaceID</span>
+        <span class="text-muted" style="font-weight:700;font-size:12px;">Auto verify</span>
+      </div>
+      <div class="gcard-b" style="height:100%;min-height:0;">
+        <div class="video-shell" style="height:100%;min-height:0;">
+          <video id="cam" autoplay playsinline></video>
+          <canvas id="cv" style="display:none;"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel phải -->
+    <div class="side-stack">
+
+      <div class="gcard">
+        <div class="gcard-h">
+          <span>📌 Thông tin</span>
+        </div>
+        <div class="gcard-b">
+          <div class="kv">
+            <div class="k">Cư dân</div>
+            <div class="v">{{ resident_id }}</div>
+          </div>
+          <div class="kv mt-2">
+            <div class="k">Biển số</div>
+            <div class="v">{{ plate_text }}</div>
+          </div>
+          <div class="kv mt-2">
+            <div class="k">Chế độ</div>
+            <div class="v">{{ mode }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Backup code -->
+      <div id="codeBox" class="gcard" style="display:none;">
+        <div class="gcard-h">
+          <span>🔑 Mã dự phòng (6 số)</span>
+        </div>
+        <div class="gcard-b">
+          <input
+            id="backup"
+            class="form-control compact-input"
+            inputmode="numeric"
+            maxlength="6"
+            placeholder="Nhập 6 số"
+          />
+          <button id="btnSend" class="btn btn-primary w-100 mt-2">
+            Gửi xác thực
+          </button>
+          <small class="text-muted d-block mt-2">
+            * Dùng khi FaceID không khớp
+          </small>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -69,12 +112,15 @@
   let stream=null, busy=false, stopped=false;
 
   function setStatus(msg, cls="alert alert-info"){
-    statusBox.className="status " + cls;
-    statusBox.innerText=msg;
+    statusBox.className = "big-status show " + cls;
+    statusBox.innerText = msg;
   }
 
   async function startCamera(){
-    stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user" }, audio:false });
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:"user" },
+      audio:false
+    });
     video.srcObject = stream;
     await new Promise(r => video.onloadedmetadata = r);
   }
@@ -101,7 +147,7 @@
       };
       const resp = await fetch("/gate/face/capture", {
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{ "Content-Type":"application/json" },
         body: JSON.stringify(payload)
       });
       const data = await resp.json();
@@ -114,7 +160,7 @@
 
       if (data && data.need_backup_code){
         setStatus(data.message || "Không xác thực được. Nhập mã 6 số.", "alert alert-warning");
-        codeBox.classList.add("show");
+        codeBox.style.display="block";
         setTimeout(()=>backupInput.focus(), 50);
         return;
       }
@@ -134,19 +180,23 @@
     try{
       await startCamera();
       setStatus("Đang xác thực khuôn mặt…", "alert alert-info");
-      // auto loop: tự chụp liên tục
       setInterval(()=>sendFace(null), 1200);
     }catch(e){
       setStatus("Không mở được camera. Vui lòng cấp quyền.", "alert alert-danger");
     }
   }
 
-  btnSend.addEventListener("click", ()=>{
+  // Reload
+  document.getElementById("btn-reload")?.addEventListener("click", ()=>location.reload());
+
+  // Backup submit
+  btnSend?.addEventListener("click", ()=>{
     const code = (backupInput.value||"").trim();
-    if (!code) return;
+    if (code.length !== 6) return;
     sendFace(code);
   });
-  backupInput.addEventListener("keydown", (e)=>{
+
+  backupInput?.addEventListener("keydown", (e)=>{
     if (e.key === "Enter"){
       e.preventDefault();
       btnSend.click();

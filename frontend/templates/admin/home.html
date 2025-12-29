@@ -3,185 +3,156 @@
 
 {% block head %}
   {{ super() }}
-  <style>
-  .stat-card {
-    border: 1px solid rgba(0,0,0,.08);
-    border-radius: 14px;
-    transition: all .15s ease-in-out;
-  }
-  .stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 10px 24px rgba(0,0,0,.08);
-  }
-  .stat-card-link {
-    text-decoration: none;
-    color: inherit;
-  }
-  .stat-label {
-    font-size: 0.95rem;
-    color: #6c757d;
-    margin-bottom: .25rem;
-  }
-  .stat-value {
-    font-size: 2rem;
-    font-weight: 700;
-    line-height: 1.1;
-  }
-  .stat-icon {
-    font-size: 2.2rem;
-    opacity: .9;
-  }
-  .chart-card .card-header{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-  }
-  .chart-title{
-    display:flex;
-    align-items:center;
-    gap:.5rem;
-    font-weight:600;
-  }
-  .gate-actions{
-    display:flex;
-    align-items:center;
-    gap:.5rem;
-  }
-  </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/admin_home.css') }}?v=2">
 {% endblock %}
 
 {% block content %}
-<div class="text-center mb-4">
-  <h2 class="fw-bold">
-    <span style="font-size:1.25em">🏢</span>
-    Trang chủ quản trị Smart Parking
-  </h2>
-</div>
+<div class="page-wrap">
 
-<div class="row g-3 mb-4">
-  <!-- 1. TỔNG SỐ CƯ DÂN -->
-  <div class="col-md-4">
-    <a href="{{ url_for('admin_residents_list') }}" class="stat-card-link">
-      <div class="card stat-card h-100">
-        <div class="card-body d-flex align-items-center justify-content-between">
-          <div>
-            <div class="stat-label">Tổng số cư dân</div>
-            <div class="stat-value text-primary">{{ stats.total_residents }}</div>
-          </div>
-          <div class="stat-icon text-primary">👥</div>
-        </div>
-      </div>
-    </a>
+  <!-- Tiêu đề (giữ nhưng gọn) -->
+  <div class="page-title">
+    <div class="icon">🏢</div>
+    <h2 class="text">Trang chủ quản trị Smart Parking</h2>
   </div>
 
-  <!-- 2. KHÁCH NGOÀI HÔM NAY -->
-  <div class="col-md-4">
-    <a href="{{ url_for('admin_guests') }}" class="stat-card-link">
-      <div class="card stat-card h-100">
-        <div class="card-body d-flex align-items-center justify-content-between">
-          <div>
-            <div class="stat-label">Khách ngoài hôm nay</div>
-            <div class="stat-value text-success">{{ stats.total_guests_today }}</div>
+  <div class="row g-3 mb-4">
+    <!-- 1. TỔNG SỐ CƯ DÂN -->
+    <div class="col-md-4">
+      <a href="{{ url_for('admin_residents_list') }}" class="stat-card-link">
+        <div class="card stat-card h-100">
+          <div class="card-body d-flex align-items-center justify-content-between">
+            <div>
+              <div class="stat-label">Tổng số cư dân</div>
+              <div class="stat-value text-primary">{{ stats.total_residents }}</div>
+            </div>
+            <div class="stat-icon text-primary">👥</div>
           </div>
-          <div class="stat-icon text-success">🚗</div>
         </div>
-      </div>
-    </a>
+      </a>
+    </div>
+
+    <!-- 2. KHÁCH NGOÀI HÔM NAY -->
+    <div class="col-md-4">
+      <a href="{{ url_for('admin_guests') }}" class="stat-card-link">
+        <div class="card stat-card h-100">
+          <div class="card-body d-flex align-items-center justify-content-between">
+            <div>
+              <div class="stat-label">Khách ngoài hôm nay</div>
+              <div class="stat-value text-success">{{ stats.total_guests_today }}</div>
+            </div>
+            <div class="stat-icon text-success">🚗</div>
+          </div>
+        </div>
+      </a>
+    </div>
+
+    <!-- 3. XE ĐANG Ở BÃI -->
+    <div class="col-md-4">
+      <a href="{{ url_for('admin_active_vehicles') }}" class="stat-card-link">
+        <div class="card stat-card h-100">
+          <div class="card-body d-flex align-items-center justify-content-between">
+            <div>
+              <div class="stat-label">Xe đang ở bãi</div>
+              <div class="stat-value text-warning">{{ stats.active_vehicles }}</div>
+            </div>
+            <div class="stat-icon text-warning">🅿️</div>
+          </div>
+        </div>
+      </a>
+    </div>
   </div>
 
-  <!-- 3. XE ĐANG Ở BÃI -->
-  <div class="col-md-4">
-    <a href="{{ url_for('admin_active_vehicles') }}" class="stat-card-link">
-      <div class="card stat-card h-100">
-        <div class="card-body d-flex align-items-center justify-content-between">
-          <div>
-            <div class="stat-label">Xe đang ở bãi</div>
-            <div class="stat-value text-warning">{{ stats.active_vehicles }}</div>
-          </div>
-          <div class="stat-icon text-warning">🅿️</div>
-        </div>
+  <!-- =========================
+        TRẠM CỔNG (STATUS + UNLOCK)
+      ========================= -->
+  <div class="card mb-3">
+    <div class="card-header d-flex align-items-center justify-content-between">
+      <div class="fw-semibold">🚧 Trạm cổng</div>
+
+      <div class="gate-actions">
+        <!-- ✅ MỞ TAB MỚI: không truyền ngược -->
+        <a class="btn btn-sm btn-outline-primary"
+           href="/gate/plate"
+           target="_blank"
+           rel="noopener">
+          🧾 Mở Trạm cổng
+        </a>
+
+        <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()">Làm mới</button>
+
+        {% if gate_locked %}
+          <button id="btnUnlockGate" class="btn btn-sm btn-danger">
+            🔓 Mở khóa
+          </button>
+        {% else %}
+          <span class="badge bg-success">Đang hoạt động</span>
+        {% endif %}
       </div>
-    </a>
-  </div>
-</div>
+    </div>
 
-<!-- =========================
-      TRẠM CỔNG (STATUS + UNLOCK)
-     ========================= -->
-<div class="card mb-3">
-  <div class="card-header d-flex align-items-center justify-content-between">
-    <div class="fw-semibold">🚧 Trạm cổng</div>
-
-    <div class="gate-actions">
-      <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()">Làm mới</button>
-
+    <div class="card-body">
       {% if gate_locked %}
-        <button id="btnUnlockGate" class="btn btn-sm btn-danger">
-          🔓 Mở khóa
-        </button>
+        <div class="alert alert-danger mb-0">
+          <div class="fw-bold">TRẠM ĐANG BỊ KHÓA</div>
+          {% if gate_lock_info and gate_lock_info.locked_reason %}
+            <div class="mt-1">{{ gate_lock_info.locked_reason }}</div>
+          {% endif %}
+          {% if gate_lock_info and gate_lock_info.locked_at %}
+            <div class="text-muted mt-1">Khóa lúc: {{ gate_lock_info.locked_at }}</div>
+          {% endif %}
+          <div class="mt-2">
+            Nhấn <b>Mở khóa</b> để cho trạm hoạt động lại ngay.
+          </div>
+        </div>
       {% else %}
-        <span class="badge bg-success">Đang hoạt động</span>
+        <div class="alert alert-success mb-0">
+          <span class="me-2">🟢</span><b>TRẠM ĐANG HOẠT ĐỘNG BÌNH THƯỜNG</b>
+        </div>
       {% endif %}
     </div>
   </div>
 
-  <div class="card-body">
-    {% if gate_locked %}
-      <div class="alert alert-danger mb-0">
-        <div class="fw-bold">TRẠM ĐANG BỊ KHÓA</div>
-        {% if gate_lock_info and gate_lock_info.locked_reason %}
-          <div class="mt-1">{{ gate_lock_info.locked_reason }}</div>
-        {% endif %}
-        {% if gate_lock_info and gate_lock_info.locked_at %}
-          <div class="text-muted mt-1">Khóa lúc: {{ gate_lock_info.locked_at }}</div>
-        {% endif %}
-        <div class="mt-2">
-          Nhấn <b>Mở khóa</b> để cho trạm hoạt động lại ngay.
+  <div class="row g-3">
+    <!-- Doanh thu 7 ngày -->
+    <div class="col-lg-6">
+      <div class="card chart-card">
+        <div class="card-header">
+          <div class="chart-title">📊 Doanh thu 7 ngày gần nhất</div>
+        </div>
+        <div class="card-body">
+          <div class="chart-box">
+            <canvas id="revenueChart"></canvas>
+          </div>
         </div>
       </div>
-    {% else %}
-      <div class="alert alert-success mb-0">
-        <span class="me-2">🟢</span><b>TRẠM ĐANG HOẠT ĐỘNG BÌNH THƯỜNG</b>
-      </div>
-    {% endif %}
-  </div>
-</div>
+    </div>
 
-<div class="row g-3">
-  <!-- Doanh thu 7 ngày -->
-  <div class="col-lg-6">
-    <div class="card chart-card">
-      <div class="card-header">
-        <div class="chart-title">📊 Doanh thu 7 ngày gần nhất</div>
-      </div>
-      <div class="card-body">
-        <canvas id="revenueChart"></canvas>
+    <!-- Lượt xe ra/vào 7 ngày -->
+    <div class="col-lg-6">
+      <div class="card chart-card">
+        <div class="card-header">
+          <div class="chart-title">🚗 Lượt xe ra/vào 7 ngày gần nhất</div>
+        </div>
+        <div class="card-body">
+          <div class="chart-box">
+            <canvas id="trafficChart"></canvas>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Lượt xe ra/vào 7 ngày -->
-  <div class="col-lg-6">
-    <div class="card chart-card">
-      <div class="card-header">
-        <div class="chart-title">🚗 Lượt xe ra/vào 7 ngày gần nhất</div>
-      </div>
-      <div class="card-body">
-        <canvas id="trafficChart"></canvas>
-      </div>
+  {% if notifications and notifications|length > 0 %}
+    <div class="mt-3">
+      {% for n in notifications %}
+        <div class="alert alert-{{ n.level }} mb-2">
+          {{ n.message }}
+        </div>
+      {% endfor %}
     </div>
-  </div>
-</div>
+  {% endif %}
 
-{% if notifications and notifications|length > 0 %}
-  <div class="mt-4">
-    {% for n in notifications %}
-      <div class="alert alert-{{ n.level }} mb-2">
-        {{ n.message }}
-      </div>
-    {% endfor %}
-  </div>
-{% endif %}
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -208,6 +179,7 @@ new Chart(document.getElementById('revenueChart'), {
   },
   options: {
     responsive: true,
+    maintainAspectRatio: false,
     plugins: { legend: { display: true } },
     scales: { y: { beginAtZero: true } }
   }
@@ -231,6 +203,7 @@ new Chart(document.getElementById('trafficChart'), {
   },
   options: {
     responsive: true,
+    maintainAspectRatio: false,
     plugins: { legend: { display: true } },
     scales: { y: { beginAtZero: true } }
   }
