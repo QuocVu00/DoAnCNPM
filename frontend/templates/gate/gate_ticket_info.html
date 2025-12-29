@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Mã vé của bạn{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+  .box{max-width:720px;margin:0 auto}
+  .hero{
+    background: linear-gradient(135deg,#2563eb,#10b981);
+    color:#fff;border-radius:16px;padding:22px;text-align:center
+  }
+  .code{
+    font-size:46px;font-weight:900;letter-spacing:4px;margin:10px 0
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-4 box">
+  <div class="hero">
+    <h2 class="fw-bold mb-1">MÃ VÉ CỦA BẠN LÀ</h2>
+    <div class="code">{{ code }}</div>
+    <div class="opacity-90">Biển số: <b>{{ plate }}</b></div>
+    <div class="mt-2">Hãy ghi nhớ và chụp lại để lấy xe.</div>
+  </div>
+
+  <div class="alert alert-info mt-3">
+    Hệ thống sẽ tự quay về màn hình quét biển số sau <b>10 giây</b>.
+  </div>
+</div>
+
+<script>
+  setTimeout(()=>{ window.location.href="/gate/plate"; }, 10000);
+</script>
+{% endblock %}

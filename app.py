@@ -1,21 +1,20 @@
 from flask import (
     Flask, render_template, redirect, url_for,
-    request, session, flash
+    request, session, flash, jsonify
 )
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 import unicodedata
-
+import io
 import base64
 from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
-from werkzeug.exceptions import BadRequest
 
 from backend.config import Config
 from backend.db import query_one, query_all, execute
-from backend.routes_admin import admin_bp  # CHỈ GIỮ admin_bp
-from frontend.ai.plate_recognition import read_plate_from_image  # AI nhận diện biển số
+from backend.routes_admin import admin_bp
+from frontend.ai.plate_recognition import read_plate_from_image
 
 
 app = Flask(
@@ -34,6 +33,13 @@ GATE_UPLOAD_DIR = Path(app.static_folder) / "uploads" / "gate"
 
 # đăng ký backend API
 app.register_blueprint(admin_bp)
+
+# ==== Face Recognition ====
+try:
+    import face_recognition
+except ImportError as e:
+    face_recognition = None
+    print("[WARN] face_recognition not available:", e)
 
 
 # =========================================================
@@ -58,13 +64,13 @@ def require_role(*roles):
 
 
 # =========================================================
-#  DB: TABLE PHỤ CHO NOTIFICATION + ĐẾM NHẬP SAI MÃ VÉ
+#  DB: TABLE PHỤ CHO NOTIFICATION + ĐẾM NHẬP SAI MÃ VÉ + LOCK TRẠM
 # =========================================================
 def ensure_support_tables():
     """
-    Tạo bảng phụ nếu chưa có (không phá DB hiện tại).
-    - admin_notifications: lưu thông báo cho admin (bao gồm: nhập sai mã vé 3 lần, v.v.)
+    - admin_notifications: lưu thông báo hệ thống cho admin
     - guest_ticket_attempts: đếm số lần nhập sai mã vé theo guest_session_id
+    - gate_locks: trạng thái khóa trạm (1 dòng duy nhất)
     """
     try:
         execute(
@@ -87,15 +93,35 @@ def ensure_support_tables():
             CREATE TABLE IF NOT EXISTS guest_ticket_attempts (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 guest_session_id INT NOT NULL,
-                wrong_count INT NOT NULL DEFAULT 0,
+                attempt_count INT DEFAULT 0,
                 last_attempt_at DATETIME NULL,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY uq_guest_session (guest_session_id)
+                locked_until DATETIME NULL,
+                updated_at DATETIME NULL,
+                UNIQUE KEY uniq_guest_session (guest_session_id)
             )
             """
         )
     except Exception as e:
         print("[WARN] ensure guest_ticket_attempts failed:", e)
+
+    try:
+        execute(
+            """
+            CREATE TABLE IF NOT EXISTS gate_locks (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                is_locked TINYINT(1) DEFAULT 0,
+                locked_reason VARCHAR(255),
+                locked_at DATETIME,
+                unlocked_at DATETIME
+            )
+            """
+        )
+        # đảm bảo chỉ có 1 dòng gate_locks
+        row = query_one("SELECT id FROM gate_locks ORDER BY id ASC LIMIT 1")
+        if not row:
+            execute("INSERT INTO gate_locks(is_locked, locked_reason, locked_at) VALUES (0, NULL, NULL)")
+    except Exception as e:
+        print("[WARN] ensure gate_locks failed:", e)
 
 
 ensure_support_tables()
@@ -114,18 +140,60 @@ def add_admin_notification(level: str, title: str, message: str):
         print("[WARN] add_admin_notification failed:", e)
 
 
-def fmt_time_ago(dt: datetime | None) -> str:
-    if not dt:
-        return ""
-    diff = datetime.now() - dt
-    sec = int(diff.total_seconds())
-    if sec < 60:
-        return f"{sec}s trước"
-    if sec < 3600:
-        return f"{sec // 60} phút trước"
-    if sec < 86400:
-        return f"{sec // 3600} giờ trước"
-    return dt.strftime("%d/%m %H:%M")
+def _get_gate_lock_id():
+    try:
+        row = query_one("SELECT id FROM gate_locks ORDER BY id ASC LIMIT 1")
+        return row["id"] if row else None
+    except Exception as e:
+        print("[WARN] _get_gate_lock_id:", e)
+        return None
+
+
+def get_gate_lock_row():
+    try:
+        return query_one("SELECT id, is_locked, locked_reason, locked_at, unlocked_at FROM gate_locks ORDER BY id ASC LIMIT 1")
+    except Exception as e:
+        print("[WARN] get_gate_lock_row:", e)
+        return None
+
+
+def gate_is_locked() -> bool:
+    row = get_gate_lock_row()
+    return bool(row and int(row.get("is_locked") or 0) == 1)
+
+
+def gate_lock(reason: str):
+    try:
+        lock_id = _get_gate_lock_id()
+        if not lock_id:
+            return
+        execute(
+            """
+            UPDATE gate_locks
+            SET is_locked=1, locked_reason=%s, locked_at=%s, unlocked_at=NULL
+            WHERE id=%s
+            """,
+            (reason, datetime.now(), lock_id),
+        )
+    except Exception as e:
+        print("[WARN] gate_lock failed:", e)
+
+
+def gate_unlock():
+    try:
+        lock_id = _get_gate_lock_id()
+        if not lock_id:
+            return
+        execute(
+            """
+            UPDATE gate_locks
+            SET is_locked=0, locked_reason=NULL, unlocked_at=%s
+            WHERE id=%s
+            """,
+            (datetime.now(), lock_id),
+        )
+    except Exception as e:
+        print("[WARN] gate_unlock failed:", e)
 
 
 # ====== HỖ TRỢ: MÃ VÉ & TÍNH TIỀN KHÁCH VÃNG LAI ======
@@ -200,9 +268,9 @@ def login():
         (username,),
     )
 
-    if resident and resident["status"] == "active":
-        pwd_hash = resident["password_hash"]
-        phone = resident["phone"]
+    if resident and resident.get("status") == "active":
+        pwd_hash = resident.get("password_hash")
+        phone = resident.get("phone")
         ok = False
 
         if pwd_hash:
@@ -287,11 +355,6 @@ def resident_dashboard():
 
 @app.route("/resident/chat/send", methods=["POST"])
 def resident_chat_send():
-    """
-    Nếu bạn muốn thật sự lưu tin nhắn cư dân để hiển thị notification cho admin,
-    bạn có thể thêm bảng resident_messages. Hiện tại mình sẽ:
-    - đẩy thành admin_notifications để admin thấy giống “tin nhắn”.
-    """
     if not require_role("resident"):
         return redirect(url_for("login"))
 
@@ -301,10 +364,7 @@ def resident_chat_send():
         return redirect(url_for("resident_dashboard"))
 
     resident_id = session.get("resident_id")
-    resident = query_one(
-        "SELECT full_name FROM residents WHERE id=%s",
-        (resident_id,),
-    )
+    resident = query_one("SELECT full_name FROM residents WHERE id=%s", (resident_id,))
     sender_name = resident["full_name"] if resident else "Cư dân"
 
     add_admin_notification(
@@ -322,18 +382,14 @@ def resident_chat_send():
 # =========================================================
 @app.route("/admin/home")
 def admin_home():
-    if not require_role("admin", "staff"):
+    if session.get("role") != "admin":
         return redirect(url_for("login"))
 
     today = datetime.now().date()
 
-    # Tổng số cư dân active
-    total_residents_row = query_one(
-        "SELECT COUNT(*) AS c FROM residents WHERE status = 'active'"
-    )
-    total_residents = total_residents_row["c"] if total_residents_row else 0
+    total_residents_row = query_one("SELECT COUNT(*) AS c FROM residents WHERE status = 'active'")
+    total_residents = int(total_residents_row["c"] if total_residents_row else 0)
 
-    # Số khách vãng lai hôm nay (đếm checkin hôm nay)
     total_guests_today_row = query_one(
         """
         SELECT COUNT(*) AS c
@@ -342,47 +398,33 @@ def admin_home():
         """,
         (today,),
     )
-    total_guests_today = total_guests_today_row["c"] if total_guests_today_row else 0
+    total_guests_today = int(total_guests_today_row["c"] if total_guests_today_row else 0)
 
-    # Xe đang ở bãi (resident_vehicles.is_in_parking=1) + guest_sessions open (hôm nay hoặc vẫn open)
-    resident_in_row = query_one(
-        "SELECT COUNT(*) AS c FROM resident_vehicles WHERE is_in_parking = 1"
-    )
-    resident_in = resident_in_row["c"] if resident_in_row else 0
+    resident_in_row = query_one("SELECT COUNT(*) AS c FROM resident_vehicles WHERE is_in_parking = 1")
+    resident_in = int(resident_in_row["c"] if resident_in_row else 0)
 
-    guest_in_row = query_one(
-        """
-        SELECT COUNT(*) AS c
-        FROM guest_sessions
-        WHERE status = 'open'
-        """
-    )
-    guest_in = guest_in_row["c"] if guest_in_row else 0
+    guest_in_row = query_one("SELECT COUNT(*) AS c FROM guest_sessions WHERE status = 'open'")
+    guest_in = int(guest_in_row["c"] if guest_in_row else 0)
 
     stats = {
-        "total_residents": int(total_residents),
-        "total_guests_today": int(total_guests_today),
-        "active_vehicles": int(resident_in) + int(guest_in),
+        "total_residents": total_residents,
+        "total_guests_today": total_guests_today,
+        "active_vehicles": resident_in + guest_in,
     }
 
-    # Doanh thu 7 ngày gần nhất (theo checkout_time)
     revenue_rows = query_all(
         """
-        SELECT
-            DATE(checkout_time) AS day,
-            SUM(fee) AS total
+        SELECT DATE(checkout_time) AS day, SUM(fee) AS total
         FROM guest_sessions
-        WHERE status = 'closed'
-          AND checkout_time IS NOT NULL
+        WHERE status='closed' AND checkout_time IS NOT NULL
         GROUP BY DATE(checkout_time)
         ORDER BY day DESC
         LIMIT 7
         """
-    )
+    ) or []
     revenue_labels = [r["day"].strftime("%d/%m") for r in reversed(revenue_rows)]
     revenue_values = [float(r["total"] or 0) for r in reversed(revenue_rows)]
 
-    # Lượt xe ra/vào 7 ngày (đúng event_type trong DB)
     traffic_rows = query_all(
         """
         SELECT
@@ -394,25 +436,23 @@ def admin_home():
         ORDER BY day DESC
         LIMIT 7
         """
-    )
+    ) or []
     traffic_labels = [r["day"].strftime("%d/%m") for r in reversed(traffic_rows)]
     traffic_in = [int(r["in_count"] or 0) for r in reversed(traffic_rows)]
     traffic_out = [int(r["out_count"] or 0) for r in reversed(traffic_rows)]
 
-    # Doanh thu hôm nay (đưa vào notifications)
     rev_today = query_one(
         """
         SELECT COALESCE(SUM(fee),0) AS total
         FROM guest_sessions
         WHERE status='closed'
-          AND checkout_time IS NOT NULL
-          AND DATE(checkout_time) = %s
+        AND checkout_time IS NOT NULL
+        AND DATE(checkout_time) = %s
         """,
         (today,),
     )
     rev_today_val = int(rev_today["total"] or 0) if rev_today else 0
 
-    # Notifications: lấy từ DB (tin nhắn cư dân, nhập sai mã vé 3 lần, ...)
     notif_rows = []
     try:
         notif_rows = query_all(
@@ -422,32 +462,33 @@ def admin_home():
             ORDER BY id DESC
             LIMIT 10
             """
-        )
+        ) or []
     except Exception as e:
         print("[WARN] read admin_notifications failed:", e)
 
-    notifications = []
+    notifications = [{
+        "level": "success",
+        "title": "Doanh thu hôm nay",
+        "time": "Hôm nay",
+        "message": f"Tổng doanh thu khách ngoài hôm nay: {rev_today_val:,}đ".replace(",", "."),
+    }]
 
-    # 1) luôn có “doanh thu hôm nay”
-    notifications.append(
-        {
-            "level": "success",
-            "title": "Doanh thu hôm nay",
-            "time": "Hôm nay",
-            "message": f"Tổng doanh thu khách ngoài hôm nay: {rev_today_val:,}đ".replace(",", "."),
-        }
-    )
-
-    # 2) đẩy các thông báo từ DB
     for r in notif_rows:
         notifications.append(
             {
                 "level": r.get("level") or "info",
                 "title": r.get("title") or "Thông báo",
-                "time": fmt_time_ago(r.get("created_at")),
+                "time": "",
                 "message": r.get("message") or "",
             }
         )
+
+    lock_row = get_gate_lock_row()
+    gate_locked = bool(lock_row and int(lock_row.get("is_locked") or 0) == 1)
+    gate_lock_info = {
+        "locked_reason": (lock_row or {}).get("locked_reason"),
+        "locked_at": (lock_row or {}).get("locked_at"),
+    }
 
     return render_template(
         "admin/home.html",
@@ -458,6 +499,8 @@ def admin_home():
         traffic_in=traffic_in,
         traffic_out=traffic_out,
         notifications=notifications,
+        gate_locked=gate_locked,
+        gate_lock_info=gate_lock_info,
     )
 
 
@@ -489,7 +532,7 @@ def admin_residents():
             CAST(r.room  AS UNSIGNED) ASC,
             r.full_name ASC
     """
-    rows = query_all(sql)
+    rows = query_all(sql) or []
 
     residents = []
     for r in rows:
@@ -600,51 +643,32 @@ def admin_reset_backup_code(resident_id):
 
 @app.route("/admin/residents/<int:resident_id>/disable", methods=["POST"], endpoint="admin_disable_resident")
 def admin_delete_resident_real(resident_id):
-    """
-    ✅ XÓA THẬT cư dân khỏi danh sách (DELETE thật):
-    - xóa các bảng con trước để tránh lỗi FK
-    - sau đó xóa residents
-    Gắn endpoint name 'admin_disable_resident' để KHÔNG làm lỗi template cũ.
-    """
     if not require_role("admin", "staff"):
         return redirect(url_for("login"))
 
-    # (1) xóa logs liên quan
+    # Xóa dữ liệu liên quan (không crash nếu thiếu bảng)
+    for sql, params in [
+        ("DELETE FROM parking_logs WHERE resident_id=%s", (resident_id,)),
+        ("DELETE FROM resident_backup_codes WHERE resident_id=%s", (resident_id,)),
+        ("DELETE FROM resident_vehicles WHERE resident_id=%s", (resident_id,)),
+        ("DELETE FROM gate_captures WHERE resident_id=%s", (resident_id,)),
+    ]:
+        try:
+            execute(sql, params)
+        except Exception as e:
+            print("[WARN] delete related table failed:", e)
+
     try:
-        execute("DELETE FROM parking_logs WHERE resident_id = %s", (resident_id,))
+        execute("DELETE FROM residents WHERE id=%s", (resident_id,))
     except Exception as e:
-        print("[WARN] delete parking_logs failed:", e)
+        print("[WARN] delete residents failed:", e)
 
-    # (2) xóa backup codes
-    try:
-        execute("DELETE FROM resident_backup_codes WHERE resident_id = %s", (resident_id,))
-    except Exception as e:
-        print("[WARN] delete resident_backup_codes failed:", e)
-
-    # (3) xóa vehicles
-    try:
-        execute("DELETE FROM resident_vehicles WHERE resident_id = %s", (resident_id,))
-    except Exception as e:
-        print("[WARN] delete resident_vehicles failed:", e)
-
-    # (4) xóa gate captures
-    try:
-        execute("DELETE FROM gate_captures WHERE resident_id = %s", (resident_id,))
-    except Exception as e:
-        print("[WARN] delete gate_captures failed:", e)
-
-    # (5) xóa resident
-    execute("DELETE FROM residents WHERE id = %s", (resident_id,))
-
-    flash("Đã xóa cư dân khỏi danh sách (xóa thật).", "warning")
+    flash("Đã xóa cư dân khỏi danh sách.", "warning")
     return redirect(url_for("admin_residents"))
 
 
 @app.route("/admin/residents/list")
 def admin_residents_list():
-    """
-    Trang DS cư dân (chỉ bảng) - base.html đang gọi endpoint này.
-    """
     if not require_role("admin", "staff"):
         return redirect(url_for("login"))
 
@@ -668,7 +692,7 @@ def admin_residents_list():
             CAST(r.room  AS UNSIGNED) ASC,
             r.full_name ASC
     """
-    rows = query_all(sql)
+    rows = query_all(sql) or []
 
     residents = []
     for r in rows:
@@ -753,7 +777,7 @@ def admin_guests():
         LIMIT 500
         """,
         tuple(params) if params else None,
-    )
+    ) or []
 
     return render_template("admin/guests.html", guests=guests)
 
@@ -792,7 +816,7 @@ def admin_report_page():
         ORDER BY gs.checkin_time DESC
         """,
         (report_date,),
-    )
+    ) or []
 
     revenue_row = query_one(
         """
@@ -816,15 +840,19 @@ def admin_report_page():
 
 @app.route("/admin/active-vehicles")
 def admin_active_vehicles():
-    """
-    ✅ FIX: Trang 'Xe đang ở bãi' phải có dữ liệu giống số 'Xe đang ở bãi' trên dashboard.
-    ✅ Thêm time vào cho cư dân (lấy thời gian IN gần nhất từ parking_logs).
-    ✅ Bỏ phần loại xe: không trả vehicle_type (template nếu có thì để trống/ẩn).
-    """
-    if not require_role("admin", "staff"):
+    """Trang 'Xe đang ở bãi'."""
+    if not require_role("admin"):
         return redirect(url_for("login"))
 
-    # Resident đang ở bãi
+    def _fmt_dt(dt):
+        try:
+            return dt.strftime("%d/%m/%Y %H:%M:%S") if dt else ""
+        except Exception:
+            return ""
+
+    vehicles = []
+
+    # 1) Resident đang ở bãi
     resident_rows = query_all(
         """
         SELECT
@@ -835,61 +863,64 @@ def admin_active_vehicles():
         FROM resident_vehicles rv
         JOIN residents r ON r.id = rv.resident_id
         WHERE rv.is_in_parking = 1
-        ORDER BY r.floor, r.room
+        ORDER BY CAST(r.floor AS UNSIGNED), CAST(r.room AS UNSIGNED)
         """
-    )
+    ) or []
 
-    resident_active = []
     for r in resident_rows:
-        plate = (r.get("plate") or "").upper()
+        plate = (r.get("plate") or "").strip().upper()
+        if not plate:
+            continue
+
         last_in = query_one(
             """
             SELECT event_time
             FROM parking_logs
             WHERE event_type = 'resident_in'
-              AND plate = %s
+              AND UPPER(plate) = %s
             ORDER BY event_time DESC
             LIMIT 1
             """,
             (plate,),
         )
-        resident_active.append(
+        in_time = last_in["event_time"] if last_in else None
+
+        vehicles.append(
             {
-                "kind": "resident",
-                "plate": plate,
+                "source": "resident",
+                "plate_number": plate,
+                "vehicle_type": None,
                 "owner_name": r.get("owner_name") or "",
                 "location": f"{r.get('floor')}/{r.get('room')}",
-                "in_time": last_in["event_time"] if last_in else None,
-                "ticket_code": None,
+                "checkin_display": _fmt_dt(in_time) if in_time else "-",
+                "ticket_code": "-",
             }
         )
 
-    # Guest đang ở bãi (open)
+    # 2) Guest đang ở bãi (open)
     guest_rows = query_all(
         """
-        SELECT
-            plate, ticket_code, checkin_time
+        SELECT plate, ticket_code, checkin_time
         FROM guest_sessions
         WHERE status = 'open'
         ORDER BY checkin_time DESC
         """
-    )
+    ) or []
 
-    guest_active = [
-        {
-            "kind": "guest",
-            "plate": (g.get("plate") or "").upper(),
-            "owner_name": "",
-            "location": "",
-            "in_time": g.get("checkin_time"),
-            "ticket_code": g.get("ticket_code"),
-        }
-        for g in guest_rows
-    ]
+    for g in guest_rows:
+        vehicles.append(
+            {
+                "source": "guest",
+                "plate_number": (g.get("plate") or "").strip().upper(),
+                "vehicle_type": None,
+                "owner_name": "",
+                "location": "",
+                "checkin_display": _fmt_dt(g.get("checkin_time")) or "-",
+                "ticket_code": g.get("ticket_code") or "-",
+            }
+        )
 
-    active_list = resident_active + guest_active
-
-    return render_template("admin/active_vehicles.html", active_list=active_list)
+    return render_template("admin/active_vehicles.html", vehicles=vehicles)
 
 
 @app.route("/admin/chat")
@@ -909,7 +940,7 @@ def gate_index():
 
 @app.route("/gate/plate")
 def gate_plate():
-    return render_template("gate/gate_plate.html")
+    return render_template("gate/gate_plate.html", gate_locked=gate_is_locked())
 
 
 @app.route("/gate/face")
@@ -919,20 +950,14 @@ def gate_face():
     mode = request.args.get("mode", "AUTO").upper()
 
     ref_face_image = None
+    # cột face_image có thể không tồn tại -> không crash
     if resident_id:
-        row = query_one(
-            """
-            SELECT face_image
-            FROM gate_captures
-            WHERE resident_id = %s
-              AND face_image IS NOT NULL
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (resident_id,),
-        )
-        if row:
-            ref_face_image = row["face_image"]
+        try:
+            row = query_one("SELECT face_image FROM residents WHERE id=%s LIMIT 1", (resident_id,))
+            if row:
+                ref_face_image = row.get("face_image")
+        except Exception as e:
+            print("[WARN] residents.face_image not available:", e)
 
     return render_template(
         "gate/gate_face.html",
@@ -944,340 +969,228 @@ def gate_face():
 
 
 # =========================================================
-#      API GATE: BƯỚC 1 – XỬ LÝ BIỂN SỐ (gate_plate)
+#      HỖ TRỢ LƯU ẢNH TỪ DATA URL
 # =========================================================
-def save_data_url_or_bytes(data, folder_name: str, prefix: str) -> str | None:
-    if not data:
+def save_data_url(data_url: str, folder_name: str, prefix: str) -> str | None:
+    if not data_url or not isinstance(data_url, str) or not data_url.startswith("data:image"):
         return None
     try:
-        if isinstance(data, str) and data.startswith("data:image"):
-            _, b64_data = data.split(",", 1)
-            img_bytes = base64.b64decode(b64_data)
-        elif isinstance(data, bytes):
-            img_bytes = data
-        else:
-            return None
-
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _, b64_data = data_url.split(",", 1)
+        img_bytes = base64.b64decode(b64_data)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         filename = f"{prefix}_{ts}.png"
         folder = GATE_UPLOAD_DIR / folder_name
         folder.mkdir(parents=True, exist_ok=True)
         filepath = folder / filename
         with open(filepath, "wb") as f:
             f.write(img_bytes)
-
         return f"{folder_name}/{filename}"
     except Exception as e:
-        print("[ERROR] save_data_url_or_bytes:", e)
+        print("[ERROR] save_data_url:", e)
         return None
 
 
+def normalize_plate(text: str) -> str:
+    if not text:
+        return ""
+    return (
+        text.replace(" ", "")
+            .replace("-", "")
+            .replace(".", "")
+            .replace("_", "")
+            .upper()
+            .strip()
+    )
+
+
+# =========================================================
+#      API GATE: BƯỚC 1 – XỬ LÝ BIỂN SỐ (gate_plate)
+# =========================================================
 @app.route("/gate/capture", methods=["POST"])
 def gate_capture():
-    """
-    - Cư dân:
-        + nếu is_in_parking = 0/NULL -> IN (ghi log resident_in)
-        + nếu is_in_parking = 1 -> OUT -> chuyển face step
-    - Khách:
-        + nếu chưa có session open -> IN (ticket_code)
-        + nếu đã open -> OUT yêu cầu mã, sai 3 lần -> notify admin
-    """
     try:
         data = request.get_json(silent=True) or {}
 
-        plate_data = data.get("plate_image")
-        face_data = data.get("face_image")
-        scene_data = data.get("scene_image")
+        plate_image = data.get("plate_image")          # có thể là dataURL/base64/path
+        manual_plate = (data.get("plate_text_manual") or "").strip().upper()
 
-        guest_ticket_code = (data.get("guest_ticket_code") or "").strip() or None
-        plate_text_manual = (data.get("plate_text_manual") or "").strip() or None
+        def _to_image_bytes(val):
+            """
+            Chuyển mọi kiểu input về bytes ảnh:
+            - data:image/...;base64,xxxx
+            - base64 trần
+            - đường dẫn file (C:\\... hoặc uploads/gate/plates/..)
+            - bytes
+            """
+            if not val:
+                return None
 
-        if not plate_data:
-            return {"ok": False, "message": "Thiếu ảnh biển số (plate_image)."}, 400
+            # 1) đã là bytes
+            if isinstance(val, (bytes, bytearray)):
+                return bytes(val)
 
-        # 1) Lưu ảnh
-        plate_filename = save_data_url_or_bytes(plate_data, "plates", "plate")
-        face_filename = save_data_url_or_bytes(face_data, "faces", "face")
-        scene_filename = save_data_url_or_bytes(scene_data, "scenes", "scene")
+            # 2) string
+            if isinstance(val, str):
+                s = val.strip()
 
-        if not plate_filename:
-            return {"ok": False, "message": "Không lưu được ảnh biển số."}, 500
+                # 2.1 dataURL
+                if s.startswith("data:image"):
+                    try:
+                        _, b64 = s.split(",", 1)
+                        return base64.b64decode(b64)
+                    except Exception as e:
+                        print("[WARN] decode dataURL failed:", e)
+                        return None
 
-        # 2) OCR
-        full_path = GATE_UPLOAD_DIR / plate_filename
-        if plate_text_manual:
-            plate_text = plate_text_manual
-        else:
-            plate_text = ""
+                # 2.2 base64 trần (không có header)
+                # heuristic: dài + không có dấu \ hoặc :// + chỉ base64 chars
+                if len(s) > 100 and ("\\\\" not in s) and ("://" not in s) and ("/" not in s[:10]):
+                    try:
+                        return base64.b64decode(s)
+                    except Exception:
+                        pass
+
+                # 2.3 là path file (absolute hoặc relative)
+                try:
+                    p = Path(s)
+                    if p.exists():
+                        return p.read_bytes()
+                except Exception:
+                    pass
+
+                # 2.4 là relative path trong uploads (vd: plates/plate_...png)
+                try:
+                    p2 = (GATE_UPLOAD_DIR / s).resolve()
+                    if p2.exists():
+                        return p2.read_bytes()
+                except Exception:
+                    pass
+
+            return None
+
+        # ====== 1) LẤY BYTES ẢNH BIỂN SỐ ĐỂ OCR ======
+        img_bytes = _to_image_bytes(plate_image)
+
+        # ====== 2) OCR / MANUAL ======
+        plate_text = manual_plate
+
+        if not plate_text:
+            if not img_bytes:
+                # log để biết frontend gửi gì
+                print("[DEBUG] plate_image type:", type(plate_image), "len:", (len(plate_image) if isinstance(plate_image, str) else "N/A"))
+                return jsonify({"ok": False, "message": "Không nhận được ảnh biển số từ camera."}), 200
+
             try:
-                with open(full_path, "rb") as f:
-                    img_bytes = f.read()
-                plate_text = read_plate_from_image(img_bytes) or ""
+                # ✅ QUAN TRỌNG: OCR NHẬN BYTES
+                plate_text = (read_plate_from_image(img_bytes) or "").strip().upper()
             except Exception as e:
-                print("[WARN] OCR error:", e)
+                print("[WARN] OCR read_plate_from_image failed:", e)
                 plate_text = ""
 
-        plate_text = plate_text.strip().upper() if plate_text else ""
+        # ====== 3) NORMALIZE BIỂN SỐ ======
+        plate_text = (
+            plate_text.replace(" ", "")
+                      .replace("-", "")
+                      .replace(".", "")
+                      .replace("_", "")
+                      .upper()
+        )
+
+        print("[DEBUG] gate_capture plate_text =", plate_text)
+
         if not plate_text:
-            return {"ok": False, "message": "Không đọc được biển số, vui lòng thử lại hoặc nhập tay."}, 200
+            return jsonify({"ok": False, "message": "Không đọc được biển số. Vui lòng thử lại."}), 200
 
         now = datetime.now()
 
-        # 3) check resident vehicle
+        # =====================================================
+        # A) RESIDENT
+        # =====================================================
         veh_row = query_one(
             """
-            SELECT rv.id, rv.resident_id, rv.is_in_parking, rv.plate
+            SELECT rv.id, rv.resident_id, rv.is_in_parking
             FROM resident_vehicles rv
-            WHERE UPPER(rv.plate) = %s
+            WHERE UPPER(REPLACE(REPLACE(REPLACE(rv.plate,' ',''),'-',''),'.','')) = %s
+            LIMIT 1
+            """,
+            (plate_text,)
+        )
+
+        if veh_row:
+            resident_id = veh_row["resident_id"]
+            is_in = int(veh_row.get("is_in_parking") or 0)
+
+            if is_in == 0:
+                execute("UPDATE resident_vehicles SET is_in_parking=1 WHERE id=%s", (veh_row["id"],))
+                execute(
+                    """
+                    INSERT INTO parking_logs(event_time, event_type, user_type, resident_id, guest_session_id, plate)
+                    VALUES (%s,'resident_in','resident',%s,NULL,%s)
+                    """,
+                    (now, resident_id, plate_text),
+                )
+                return jsonify({"ok": True, "action": "redirect", "redirect_url": url_for("gate_message", kind="welcome")}), 200
+
+            return jsonify({
+                "ok": True,
+                "action": "redirect",
+                "redirect_url": url_for("gate_face", resident_id=resident_id, plate_text=plate_text, mode="OUT")
+            }), 200
+
+        # =====================================================
+        # B) GUEST
+        # =====================================================
+        session_row = query_one(
+            """
+            SELECT id
+            FROM guest_sessions
+            WHERE UPPER(REPLACE(REPLACE(REPLACE(plate,' ',''),'-',''),'.','')) = %s
+              AND status='open'
+            ORDER BY id DESC
             LIMIT 1
             """,
             (plate_text,),
         )
 
-        if veh_row and veh_row.get("resident_id"):
-            resident_id = veh_row["resident_id"]
-            current_state = None if veh_row["is_in_parking"] is None else bool(veh_row["is_in_parking"])
+        if session_row:
+            if gate_is_locked():
+                return jsonify({"ok": False, "gate_locked": True, "message": "Trạm đang bị khóa. Liên hệ Admin."}), 200
 
-            if current_state is False or current_state is None:
-                # IN
-                execute("UPDATE resident_vehicles SET is_in_parking = 1 WHERE id = %s", (veh_row["id"],))
-                execute(
-                    """
-                    INSERT INTO parking_logs(event_time, event_type, user_type, resident_id, guest_session_id, plate)
-                    VALUES (%s, %s, 'resident', %s, NULL, %s)
-                    """,
-                    (now, "resident_in", resident_id, plate_text),
-                )
-                try:
-                    execute(
-                        """
-                        INSERT INTO gate_captures(mode, backup_code, resident_id, plate_image, face_image, scene_image)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        """,
-                        ("IN", None, resident_id, plate_filename, face_filename, scene_filename),
-                    )
-                except Exception as e:
-                    print("[WARN] gate_captures resident IN:", e)
-
-                return {
-                    "ok": True,
-                    "user_type": "resident",
-                    "event_type": "resident_in",
-                    "mode": "IN",
-                    "plate_text": plate_text,
-                    "message": "Đã nhận diện cư dân, xe vào bãi thành công.",
-                }, 200
-
-            # OUT -> face step
-            try:
-                execute(
-                    """
-                    INSERT INTO gate_captures(mode, backup_code, resident_id, plate_image, face_image, scene_image)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    ("OUT", None, resident_id, plate_filename, face_filename, scene_filename),
-                )
-            except Exception as e:
-                print("[WARN] gate_captures resident OUT-plate:", e)
-
-            return {
+            return jsonify({
                 "ok": True,
-                "user_type": "resident",
-                "next_step": "face",
-                "resident_id": resident_id,
-                "plate_text": plate_text,
-                "mode": "OUT",
-                "plate_image": plate_filename,
-                "message": "Xe cư dân đang trong bãi, chuyển sang bước xác thực khuôn mặt.",
-            }, 200
+                "action": "redirect",
+                "redirect_url": url_for("gate_ticket", plate=plate_text, session_id=session_row["id"])
+            }), 200
 
-        # 4) guest flow
-        session_row = None
-        if guest_ticket_code:
-            session_row = query_one(
-                """
-                SELECT id, plate, checkin_time, ticket_code
-                FROM guest_sessions
-                WHERE ticket_code = %s AND status = 'open'
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (guest_ticket_code,),
-            )
-
-        if session_row is None:
-            session_row = query_one(
-                """
-                SELECT id, plate, checkin_time, ticket_code
-                FROM guest_sessions
-                WHERE plate = %s AND status = 'open'
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (plate_text,),
-            )
-
-        if session_row is None:
-            # guest IN
-            ticket_code_created = generate_ticket_code()
-            execute(
-                """
-                INSERT INTO guest_sessions(plate, ticket_code, checkin_time, status, plate_image)
-                VALUES (%s, %s, %s, %s, %s)
-                """,
-                (plate_text, ticket_code_created, now, "open", plate_filename),
-            )
-
-            row = query_one(
-                """
-                SELECT id
-                FROM guest_sessions
-                WHERE plate = %s AND ticket_code = %s
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (plate_text, ticket_code_created),
-            )
-            guest_session_id = row["id"] if row else None
-
-            execute(
-                """
-                INSERT INTO parking_logs(event_time, event_type, user_type, resident_id, guest_session_id, plate)
-                VALUES (%s, %s, 'guest', NULL, %s, %s)
-                """,
-                (now, "guest_in", guest_session_id, plate_text),
-            )
-
-            try:
-                execute(
-                    """
-                    INSERT INTO gate_captures(mode, backup_code, resident_id, plate_image, face_image, scene_image)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    ("IN", None, None, plate_filename, face_filename, scene_filename),
-                )
-            except Exception as e:
-                print("[WARN] gate_captures guest IN:", e)
-
-            return {
-                "ok": True,
-                "user_type": "guest",
-                "event_type": "guest_in",
-                "mode": "IN",
-                "plate_text": plate_text,
-                "ticket_code": ticket_code_created,
-                "message": f"Mã vé của bạn là {ticket_code_created}. Vui lòng giữ mã để xuất trình khi lấy xe ra.",
-            }, 200
-
-        # guest OUT
-        guest_session_id = session_row["id"]
-        expected_ticket = (session_row["ticket_code"] or "").strip()
-
-        if not guest_ticket_code:
-            return {
-                "ok": False,
-                "message": "Vui lòng nhập mã vé 6 số để lấy xe ra.",
-                "need_ticket_code": True,
-                "plate_text": plate_text,
-            }, 200
-
-        if guest_ticket_code != expected_ticket:
-            # ✅ đếm sai + notify admin nếu >=3
-            try:
-                row = query_one(
-                    "SELECT wrong_count FROM guest_ticket_attempts WHERE guest_session_id=%s",
-                    (guest_session_id,),
-                )
-                if row:
-                    wrong_count = int(row["wrong_count"] or 0) + 1
-                    execute(
-                        """
-                        UPDATE guest_ticket_attempts
-                        SET wrong_count=%s, last_attempt_at=%s
-                        WHERE guest_session_id=%s
-                        """,
-                        (wrong_count, now, guest_session_id),
-                    )
-                else:
-                    wrong_count = 1
-                    execute(
-                        """
-                        INSERT INTO guest_ticket_attempts(guest_session_id, wrong_count, last_attempt_at)
-                        VALUES (%s, %s, %s)
-                        """,
-                        (guest_session_id, wrong_count, now),
-                    )
-
-                if wrong_count >= 3:
-                    add_admin_notification(
-                        "danger",
-                        "Nhập mã vé sai quá 3 lần",
-                        f"Biển số: {plate_text} | Session ID: {guest_session_id} | Lần sai: {wrong_count} | Thời gian: {now.strftime('%d/%m/%Y %H:%M:%S')}",
-                    )
-            except Exception as e:
-                print("[WARN] track wrong attempts failed:", e)
-
-            return {
-                "ok": False,
-                "message": "Mã vé không đúng. Vui lòng kiểm tra lại.",
-                "need_ticket_code": True,
-                "plate_text": plate_text,
-            }, 200
-
-        # đúng mã -> clear attempts + checkout + fee
-        try:
-            execute("DELETE FROM guest_ticket_attempts WHERE guest_session_id=%s", (guest_session_id,))
-        except Exception:
-            pass
-
-        fee = calculate_fee(session_row["checkin_time"], now)
+        ticket_code = f"{random.randint(0, 999999):06d}"
         execute(
-            """
-            UPDATE guest_sessions
-            SET checkout_time = %s,
-                fee = %s,
-                status = 'closed'
-            WHERE id = %s
-            """,
-            (now, fee, guest_session_id),
+            "INSERT INTO guest_sessions(plate, ticket_code, checkin_time, status) VALUES (%s,%s,%s,'open')",
+            (plate_text, ticket_code, now),
         )
+
+        created = query_one(
+            "SELECT id FROM guest_sessions WHERE plate=%s AND ticket_code=%s ORDER BY id DESC LIMIT 1",
+            (plate_text, ticket_code),
+        )
+        guest_session_id = created["id"] if created else None
 
         execute(
             """
             INSERT INTO parking_logs(event_time, event_type, user_type, resident_id, guest_session_id, plate)
-            VALUES (%s, %s, 'guest', NULL, %s, %s)
+            VALUES (%s,'guest_in','guest',NULL,%s,%s)
             """,
-            (now, "guest_out", guest_session_id, plate_text),
+            (now, guest_session_id, plate_text),
         )
 
-        try:
-            execute(
-                """
-                INSERT INTO gate_captures(mode, backup_code, resident_id, plate_image, face_image, scene_image)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                ("OUT", None, None, plate_filename, face_filename, scene_filename),
-            )
-        except Exception as e:
-            print("[WARN] gate_captures guest OUT:", e)
-
-        return {
+        return jsonify({
             "ok": True,
-            "user_type": "guest",
-            "event_type": "guest_out",
-            "mode": "OUT",
-            "plate_text": plate_text,
-            "message": f"Thanh toán {fee}đ, xe đã được cho ra.",
-            "fee": fee,
-        }, 200
+            "action": "redirect",
+            "redirect_url": url_for("gate_ticket_info", plate=plate_text, code=ticket_code)
+        }), 200
 
-    except BadRequest as e:
-        print("[WARN] BadRequest:", e)
-        return {"ok": False, "message": "Dữ liệu gửi từ trình duyệt không hợp lệ, vui lòng thử lại."}, 200
     except Exception as e:
         print("[ERROR] gate_capture:", e)
-        return {"ok": False, "error": str(e)}, 500
-
+        return jsonify({"ok": False, "message": "Lỗi hệ thống."}), 500
 
 # =========================================================
 #  API GATE: BƯỚC 2 – XỬ LÝ KHUÔN MẶT CƯ DÂN (gate_face)
@@ -1288,145 +1201,338 @@ def gate_face_capture():
         data = request.get_json(silent=True) or {}
 
         resident_id = data.get("resident_id")
-        plate_text = (data.get("plate_text") or "").strip().upper() or None
-        raw_mode = (data.get("mode") or "AUTO").upper()
+        plate_text = normalize_plate(data.get("plate_text") or "")
+        raw_mode = (data.get("mode") or "OUT").upper()
         backup_code = (data.get("backup_code") or "").strip() or None
-        face_data = data.get("face_image")
-        scene_data = data.get("scene_image")
+        face_data = data.get("face_image")  # dataURL
 
         if not resident_id:
-            return {"ok": False, "message": "Thiếu resident_id."}, 400
+            return jsonify({"ok": False, "message": "Thiếu resident_id."}), 400
 
-        def save_face_or_scene(data_bytes, folder_name: str, prefix: str):
-            if not data_bytes:
+        # ref face: cột có thể không tồn tại -> không crash
+        ref_face_path = None
+        try:
+            row = query_one("SELECT face_image FROM residents WHERE id=%s LIMIT 1", (resident_id,))
+            ref_face_path = row["face_image"] if row else None
+        except Exception as e:
+            print("[WARN] residents.face_image not available:", e)
+
+        def decode_data_url(d):
+            if not d or not isinstance(d, str) or not d.startswith("data:image"):
                 return None
             try:
-                if isinstance(data_bytes, str) and data_bytes.startswith("data:image"):
-                    _, b64_data = data_bytes.split(",", 1)
-                    img_bytes = base64.b64decode(b64_data)
-                elif isinstance(data_bytes, bytes):
-                    img_bytes = data_bytes
-                else:
-                    return None
-
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"{prefix}_{ts}.png"
-                folder = GATE_UPLOAD_DIR / folder_name
-                folder.mkdir(parents=True, exist_ok=True)
-                filepath = folder / filename
-                with open(filepath, "wb") as f:
-                    f.write(img_bytes)
-                return f"{folder_name}/{filename}"
-            except Exception as e:
-                print("[ERROR] save_face_or_scene:", e)
+                _, b64_data = d.split(",", 1)
+                return base64.b64decode(b64_data)
+            except Exception:
                 return None
 
-        face_filename = save_face_or_scene(face_data, "faces", "face")
-        scene_filename = save_face_or_scene(scene_data, "scenes", "scene")
+        face_bytes = decode_data_url(face_data)
 
-        veh = None
-        if plate_text:
-            veh = query_one(
-                """
-                SELECT id, is_in_parking
-                FROM resident_vehicles
-                WHERE resident_id = %s AND plate = %s
-                LIMIT 1
-                """,
+        face_ok = False
+        if face_recognition and ref_face_path and face_bytes:
+            try:
+                rel = (ref_face_path or "").replace("\\", "/").lstrip("/")
+                ref_full = Path(app.static_folder) / rel
+                if ref_full.exists():
+                    ref_img = face_recognition.load_image_file(str(ref_full))
+                    ref_encs = face_recognition.face_encodings(ref_img)
+
+                    live_img = face_recognition.load_image_file(io.BytesIO(face_bytes))
+                    live_encs = face_recognition.face_encodings(live_img)
+
+                    if ref_encs and live_encs:
+                        dist = float(face_recognition.face_distance([ref_encs[0]], live_encs[0])[0])
+                        threshold = 0.60
+                        face_ok = dist <= threshold
+                        print(f"[DEBUG] face_distance={dist:.4f} threshold={threshold}")
+            except Exception as e:
+                print("[WARN] face verify error:", e)
+
+        # nếu ok -> cho ra
+        if face_ok:
+            now = datetime.now()
+            execute(
+                "UPDATE resident_vehicles SET is_in_parking=0 WHERE resident_id=%s AND UPPER(plate)=%s",
                 (resident_id, plate_text),
             )
+            execute(
+                """
+                INSERT INTO parking_logs(event_time, event_type, user_type, resident_id, guest_session_id, plate)
+                VALUES (%s, %s, 'resident', %s, NULL, %s)
+                """,
+                (now, "resident_out", resident_id, plate_text),
+            )
+            return jsonify({"ok": True, "redirect_url": url_for("gate_message", kind="goodbye")}), 200
 
-        current_state = None
-        if veh is not None:
-            current_state = bool(veh["is_in_parking"])
-
-        if raw_mode in ("IN", "OUT"):
-            mode = raw_mode
-        else:
-            mode = "IN" if (current_state is None or current_state is False) else "OUT"
-
-        face_ok = bool(data.get("face_ok") or data.get("face_verified"))
-        need_backup_code = False
-        backup_code_mismatch = False
-
-        if not face_ok:
-            if not backup_code:
-                need_backup_code = True
-            else:
-                code_row = query_one(
-                    """
-                    SELECT id
-                    FROM resident_backup_codes
-                    WHERE resident_id = %s
-                      AND backup_code = %s
-                      AND is_active = 1
-                    ORDER BY id DESC
-                    LIMIT 1
-                    """,
-                    (resident_id, backup_code),
-                )
-                if not code_row:
-                    need_backup_code = True
-                    backup_code_mismatch = True
-
-        if need_backup_code:
-            msg = "Vui lòng nhập mã 6 số được cấp cho cư dân."
-            if backup_code_mismatch:
-                msg = "Mã 6 số không đúng hoặc đã hết hiệu lực. Vui lòng nhập lại."
-            return {
+        # không ok -> cần backup
+        if not backup_code:
+            return jsonify({
                 "ok": False,
-                "message": msg,
                 "need_backup_code": True,
-                "backup_code_mismatch": backup_code_mismatch,
-                "mode": mode,
-                "resident_id": resident_id,
-                "plate_text": plate_text,
-            }, 200
+                "message": "Không xác thực được khuôn mặt. Vui lòng nhập mã 6 số của cư dân.",
+            }), 200
+
+        code_row = query_one(
+            """
+            SELECT id
+            FROM resident_backup_codes
+            WHERE resident_id=%s AND backup_code=%s AND is_active=1
+            ORDER BY id DESC LIMIT 1
+            """,
+            (resident_id, backup_code),
+        )
+        if not code_row:
+            return jsonify({
+                "ok": False,
+                "need_backup_code": True,
+                "message": "Mã 6 số không đúng hoặc đã hết hiệu lực. Vui lòng nhập lại.",
+            }), 200
 
         now = datetime.now()
-        event_type = "resident_in" if mode == "IN" else "resident_out"
-
-        if veh:
-            execute(
-                "UPDATE resident_vehicles SET is_in_parking = %s WHERE id = %s",
-                (1 if mode == "IN" else 0, veh["id"]),
-            )
-        else:
-            execute(
-                "UPDATE resident_vehicles SET is_in_parking = %s WHERE resident_id = %s",
-                (1 if mode == "IN" else 0, resident_id),
-            )
-
+        execute(
+            "UPDATE resident_vehicles SET is_in_parking=0 WHERE resident_id=%s AND UPPER(plate)=%s",
+            (resident_id, plate_text),
+        )
         execute(
             """
             INSERT INTO parking_logs(event_time, event_type, user_type, resident_id, guest_session_id, plate)
             VALUES (%s, %s, 'resident', %s, NULL, %s)
             """,
-            (now, event_type, resident_id, plate_text),
+            (now, "resident_out", resident_id, plate_text),
         )
 
-        try:
-            execute(
-                """
-                INSERT INTO gate_captures(mode, backup_code, resident_id, plate_image, face_image, scene_image)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                (mode, backup_code, resident_id, None, face_filename, scene_filename),
-            )
-        except Exception as e:
-            print("[WARN] gate_captures face step:", e)
-
-        return {
-            "ok": True,
-            "message": f"Cư dân đã được xác thực, xe đã được {'VÀO' if mode=='IN' else 'RA khỏi'} bãi.",
-            "mode": mode,
-            "resident_id": resident_id,
-            "plate_text": plate_text,
-        }, 200
+        return jsonify({"ok": True, "redirect_url": url_for("gate_message", kind="goodbye")}), 200
 
     except Exception as e:
         print("[ERROR] gate_face_capture:", e)
-        return {"ok": False, "error": str(e)}, 500
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# =========================================================
+#  Admin mở khóa trạm
+# =========================================================
+
+@app.route("/admin/gate/status", methods=["GET"])
+def admin_gate_status():
+    if session.get("role") != "admin":
+        return jsonify({"ok": False, "message": "Unauthorized"}), 401
+
+    row = get_gate_lock_row()
+    if not row:
+        return jsonify({"ok": True, "is_locked": False}), 200
+
+    return jsonify({
+        "ok": True,
+        "is_locked": bool(int(row.get("is_locked") or 0) == 1),
+        "locked_reason": row.get("locked_reason"),
+        "locked_at": row.get("locked_at").strftime("%Y-%m-%d %H:%M:%S") if row.get("locked_at") else None
+    }), 200
+
+
+@app.route("/admin/gate/unlock", methods=["POST"])
+def admin_gate_unlock():
+    if session.get("role") != "admin":
+        return jsonify({"ok": False, "message": "Unauthorized"}), 401
+
+    # 1) mở khóa trạm
+    gate_unlock()
+
+    # 2) ✅ reset toàn bộ session đang bị lock (để trang nhập vé gõ lại được ngay)
+    try:
+        execute("""
+            UPDATE guest_ticket_attempts
+            SET attempt_count = 0,
+                locked_until = NULL,
+                updated_at = %s
+            WHERE locked_until IS NOT NULL
+        """, (datetime.now(),))
+    except Exception as e:
+        print("[WARN] reset guest_ticket_attempts failed:", e)
+
+    add_admin_notification("success", "Mở khóa trạm cổng", "Admin đã mở khóa trạm và reset khóa nhập mã vé.")
+    return jsonify({"ok": True, "message": "Đã mở khóa trạm và reset khóa nhập mã vé."}), 200
+
+
+# =========================================================
+#  Trang thông báo / hiện mã vé / nhập mã vé
+# =========================================================
+@app.route("/gate/message")
+def gate_message():
+    kind = (request.args.get("kind") or "").strip().lower()
+    if kind not in ("welcome", "goodbye"):
+        return redirect(url_for("gate_plate"))
+    return render_template("gate/gate_message.html", kind=kind)
+
+
+@app.route("/gate/ticket-info")
+def gate_ticket_info():
+    plate = normalize_plate(request.args.get("plate") or "")
+    code = (request.args.get("code") or "").strip()
+    return render_template("gate/gate_ticket_info.html", plate=plate, code=code)
+
+
+MAX_TICKET_FAILS = 3
+LOCK_MINUTES = 10  # khóa 10 phút
+
+@app.route("/gate/ticket", methods=["GET"])
+def gate_ticket():
+    plate = (request.args.get("plate") or "").strip().upper()
+    session_id = (request.args.get("session_id") or "").strip()
+
+    if not session_id:
+        flash("Thiếu session_id.", "danger")
+        return redirect(url_for("gate_plate"))
+
+    # ✅ chỉ khóa theo gate_locks (admin mở là nhập lại được ngay)
+    gate_locked = gate_is_locked()
+
+    # lấy attempts để hiển thị “còn mấy lần” (không dùng để disable nữa)
+    attempt_count = 0
+    locked_until = None
+    try:
+        att = query_one(
+            "SELECT attempt_count, locked_until FROM guest_ticket_attempts WHERE guest_session_id=%s",
+            (session_id,)
+        )
+        if att:
+            attempt_count = int(att.get("attempt_count") or 0)
+            locked_until = att.get("locked_until")
+    except Exception as e:
+        print("[WARN] read guest_ticket_attempts:", e)
+
+    return render_template(
+        "gate/gate_ticket.html",
+        plate=plate,
+        session_id=session_id,
+        gate_locked=gate_locked,
+        attempt_count=attempt_count,
+        locked_until=locked_until,
+        max_fails=MAX_TICKET_FAILS
+    )
+
+
+# =========================================================
+#  API xác nhận mã vé khi ra (3 lần sai -> khóa + notify admin)
+# =========================================================
+
+@app.route("/gate/guest/verify", methods=["POST"])
+def gate_guest_verify():
+    data = request.get_json(silent=True) or {}
+
+    plate = (data.get("plate") or "").strip().upper()
+    session_id = str(data.get("session_id") or "").strip()
+    ticket_code = str(data.get("ticket_code") or "").strip()
+
+    if not session_id:
+        return jsonify({"ok": False, "message": "Thiếu session_id."}), 400
+    if not ticket_code:
+        return jsonify({"ok": False, "message": "Vui lòng nhập mã vé."}), 400
+
+    now = datetime.now()
+
+    try:
+        # ✅ nếu trạm đang bị khóa toàn hệ thống
+        if gate_is_locked():
+            return jsonify({
+                "ok": False,
+                "locked": True,
+                "message": "Trạm đang bị khóa. Vui lòng liên hệ Admin để mở khóa."
+            }), 200
+
+        # attempts row
+        att = query_one(
+            "SELECT attempt_count, locked_until FROM guest_ticket_attempts WHERE guest_session_id=%s",
+            (session_id,)
+        )
+
+        if not att:
+            execute(
+                "INSERT INTO guest_ticket_attempts (guest_session_id, attempt_count, locked_until, updated_at) VALUES (%s,0,NULL,%s)",
+                (session_id, now)
+            )
+            att = {"attempt_count": 0, "locked_until": None}
+
+        attempt_count = int(att.get("attempt_count") or 0)
+
+        # ✅ IMPORTANT: không chặn theo locked_until nữa (vì admin unlock là nhập lại ngay)
+        # nếu bạn vẫn muốn chặn theo locked_until thì bỏ comment phần này và dùng logic cũ.
+
+        gs = query_one("SELECT id, plate, ticket_code, status, checkin_time FROM guest_sessions WHERE id=%s", (session_id,))
+        if not gs:
+            return jsonify({"ok": False, "message": "Không tìm thấy phiên gửi xe khách."}), 404
+
+        real_code = str(gs.get("ticket_code") or "").strip()
+        real_plate = (gs.get("plate") or plate or "").strip().upper()
+
+        # đúng mã
+        if real_code and ticket_code == real_code:
+            execute(
+                "UPDATE guest_ticket_attempts SET attempt_count=0, locked_until=NULL, updated_at=%s WHERE guest_session_id=%s",
+                (now, session_id)
+            )
+
+            checkin_time = gs.get("checkin_time")
+            fee = 0
+            if checkin_time:
+                diff = now - checkin_time
+                hours = diff.total_seconds() / 3600
+                hours_rounded = int(hours) if hours.is_integer() else int(hours) + 1
+                fee = hours_rounded * 5000
+
+            execute(
+                "UPDATE guest_sessions SET status='closed', checkout_time=%s, fee=%s WHERE id=%s",
+                (now, fee, session_id)
+            )
+
+            execute(
+                """
+                INSERT INTO parking_logs(event_time, event_type, user_type, resident_id, guest_session_id, plate)
+                VALUES (%s,'guest_out','guest',NULL,%s,%s)
+                """,
+                (now, session_id, real_plate),
+            )
+
+            return jsonify({
+                "ok": True,
+                "message": "Xác thực thành công. Cho xe ra!",
+                "redirect_url": url_for("gate_message", kind="goodbye")
+            }), 200
+
+        # sai mã
+        attempt_count += 1
+
+        if attempt_count >= MAX_TICKET_FAILS:
+            # khóa trạm toàn hệ thống
+            gate_lock(f"Khóa trạm do nhập sai mã vé {MAX_TICKET_FAILS} lần. Plate: {real_plate} Session: {session_id}")
+
+            execute(
+                "UPDATE guest_ticket_attempts SET attempt_count=%s, locked_until=%s, updated_at=%s WHERE guest_session_id=%s",
+                (attempt_count, now + timedelta(minutes=LOCK_MINUTES), now, session_id)
+            )
+
+            add_admin_notification(
+                "danger",
+                "Khóa trạm do nhập sai mã vé",
+                f"Khách nhập sai mã vé {MAX_TICKET_FAILS} lần. Plate: {real_plate} Session: {session_id}."
+            )
+
+            return jsonify({
+                "ok": False,
+                "locked": True,
+                "message": f"Bạn đã nhập sai {MAX_TICKET_FAILS} lần. Trạm đã khóa và đã báo Admin."
+            }), 200
+
+        execute(
+            "UPDATE guest_ticket_attempts SET attempt_count=%s, updated_at=%s WHERE guest_session_id=%s",
+            (attempt_count, now, session_id)
+        )
+
+        remaining = MAX_TICKET_FAILS - attempt_count
+        return jsonify({"ok": False, "message": f"Mã vé sai. Bạn còn {remaining} lần thử.", "remaining": remaining}), 200
+
+    except Exception as e:
+        print("[ERROR] gate_guest_verify:", e)
+        return jsonify({"ok": False, "message": "Có lỗi xảy ra."}), 500
 
 
 # =========================================================

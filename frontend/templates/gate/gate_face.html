@@ -2,261 +2,157 @@
 {% block title %}Trạm FaceID cư dân{% endblock %}
 
 {% block head %}
-{{ super() }}
-<style>
-  .face-video {
-    width: 100%;
-    max-height: 380px;
-    border-radius: 0.5rem;
-    background: #000;
-    object-fit: cover;
-  }
-  .big-message {
-    font-size: 1.4rem;
-    font-weight: 600;
-  }
-</style>
+  {{ super() }}
+  <style>
+    .wrap{max-width:1100px;margin:0 auto}
+    .hero{
+      background: linear-gradient(135deg,#111827,#2563eb);
+      color:#fff;border-radius:16px;padding:18px 20px;
+      display:flex;align-items:center;justify-content:space-between;gap:12px
+    }
+    .hero h3{margin:0;font-weight:800}
+    .hero p{margin:0;opacity:.9}
+    .card video{width:100%;max-height:420px;border-radius:14px;background:#000;object-fit:cover}
+    .status{border-radius:14px;padding:14px 16px;font-weight:800;font-size:18px}
+    .code-box{display:none}
+    .code-box.show{display:block}
+  </style>
 {% endblock %}
 
 {% block content %}
-<div class="container py-4">
-
-  <!-- metadata cho JS -->
-  <div id="faceMeta"
-       data-resident-id="{{ resident_id or '' }}"
-       data-plate-text="{{ plate_text or '' }}"
-       data-mode="{{ mode or 'AUTO' }}">
+<div class="container py-4 wrap">
+  <div class="hero mb-3">
+    <div>
+      <h3>FACEID CƯ DÂN – XÁC THỰC KHI XE RA</h3>
+      <p>Hệ thống tự chụp & đối chiếu. Nếu sai sẽ yêu cầu mã 6 số.</p>
+    </div>
+    <div class="text-end">
+      <div class="badge bg-warning text-dark">Plate: {{ plate_text }}</div>
+    </div>
   </div>
 
-  <h3 class="mb-3 text-center fw-bold">
-      Trạm FaceID cư dân
-  </h3>
-  <p class="text-muted text-center small mb-4">
-    Xe đã được nhận diện là <strong>cư dân</strong> (biển số:
-    <strong>{{ plate_text or 'không rõ' }}</strong>).
-    Mời tài xế đưa khuôn mặt vào đúng vị trí camera để xác thực.
-  </p>
+  <div id="status" class="status alert alert-info">Đang mở camera…</div>
 
-  <div class="row g-3">
-    <!-- Camera -->
-    <div class="col-md-6">
-      <div class="card h-100">
-        <div class="card-header">
-          Camera khuôn mặt
-        </div>
-        <div class="card-body text-center">
-          <video id="videoFace" autoplay playsinline class="face-video"></video>
-          <canvas id="canvasFace" class="d-none"></canvas>
-        </div>
-      </div>
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <video id="cam" autoplay playsinline></video>
+      <canvas id="cv" style="display:none;"></canvas>
     </div>
+  </div>
 
-    <!-- Thông tin + điều khiển -->
-    <div class="col-md-6">
-      <div class="card mb-3">
-        <div class="card-header">
-          Thông tin lượt xe
+  <div id="codeBox" class="code-box">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="fw-bold mb-2">Nhập mã 6 số (backup code)</div>
+        <div class="d-flex gap-2">
+          <input id="backup" class="form-control" placeholder="Nhập 6 số..." inputmode="numeric" maxlength="6">
+          <button id="btnSend" class="btn btn-primary">Gửi</button>
         </div>
-        <div class="card-body">
-          <p class="mb-1">
-            <strong>Resident ID:</strong> {{ resident_id or 'N/A' }}<br>
-            <strong>Biển số:</strong> {{ plate_text or 'N/A' }}<br>
-            <strong>Chế độ:</strong>
-            {% if mode == 'OUT' %}
-              Ra bãi (Check-out)
-            {% elif mode == 'IN' %}
-              Vào bãi (Check-in)
-            {% else %}
-              Tự động (AUTO)
-            {% endif %}
-          </p>
-          <hr>
-
-          <div class="mb-2">
-            <label class="form-label mb-1">Kết quả nhận diện khuôn mặt</label><br>
-            <div class="form-check form-check-inline">
-              <input class="form-check-input" type="radio" name="faceResult"
-                     id="faceOk" value="ok" checked>
-              <label class="form-check-label" for="faceOk">
-                Hệ thống nhận diện đúng (cho xe qua)
-              </label>
-            </div>
-            <div class="form-check form-check-inline">
-              <input class="form-check-input" type="radio" name="faceResult"
-                     id="faceFail" value="fail">
-              <label class="form-check-label" for="faceFail">
-                Không nhận diện được (dùng mã 6 số)
-              </label>
-            </div>
-          </div>
-
-          <div class="mb-2">
-            <label class="form-label" for="backupCode">
-              Mã dự phòng cư dân (6 số – dùng khi FaceID lỗi)
-            </label>
-            <input type="text" id="backupCode" class="form-control"
-                   maxlength="6"
-                   placeholder="Nhập mã 6 số cư dân...">
-            <small class="text-muted">
-              Nếu chụp sai mặt nhiều lần, bảo vệ yêu cầu cư dân nhập đúng mã này để cho xe ra/vào.
-            </small>
-          </div>
-
-          <div class="mt-3 d-flex gap-2">
-            <button class="btn btn-secondary flex-grow-1" type="button" id="btnStartFace">
-              Bật camera
-            </button>
-            <button class="btn btn-primary flex-grow-1" type="button" id="btnCaptureFace">
-              Chụp &amp; xác thực
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">Trạng thái</div>
-        <div class="card-body">
-          <div id="faceStatus" class="alert alert-info big-message mb-2">
-            Chưa bật camera.
-          </div>
-          <div id="faceDebug" class="small text-muted"></div>
-        </div>
+        <div class="text-muted mt-2">Nhấn Enter để gửi nhanh.</div>
       </div>
     </div>
   </div>
 </div>
-{% endblock %}
 
-{% block scripts %}
-{{ super() }}
 <script>
-(function () {
-  const metaDiv   = document.getElementById("faceMeta");
-  const residentId = metaDiv.dataset.residentId || null;
-  const plateText  = metaDiv.dataset.plateText || null;
-  const mode       = metaDiv.dataset.mode || "AUTO";
+  const video = document.getElementById("cam");
+  const canvas = document.getElementById("cv");
+  const statusBox = document.getElementById("status");
+  const codeBox = document.getElementById("codeBox");
+  const backupInput = document.getElementById("backup");
+  const btnSend = document.getElementById("btnSend");
 
-  const video  = document.getElementById("videoFace");
-  const canvas = document.getElementById("canvasFace");
-  const btnStart   = document.getElementById("btnStartFace");
-  const btnCapture = document.getElementById("btnCaptureFace");
-  const statusBox  = document.getElementById("faceStatus");
-  const debugBox   = document.getElementById("faceDebug");
-  const backupCodeEl = document.getElementById("backupCode");
+  const residentId = "{{ resident_id }}";
+  const plateText = "{{ plate_text }}";
+  const mode = "{{ mode }}";
 
-  let stream = null;
-  let attemptCount = 0;
-  const MAX_ATTEMPTS = 3;
+  let stream=null, busy=false, stopped=false;
 
-  async function startCamera() {
-    if (stream) return;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: false
-      });
-      video.srcObject = stream;
-
-      statusBox.className = "alert alert-success big-message";
-      statusBox.textContent = "Camera đã bật – mời cư dân đưa khuôn mặt vào khung hình.";
-    } catch (err) {
-      console.error(err);
-      statusBox.className = "alert alert-danger big-message";
-      statusBox.textContent = "Không bật được camera: " + err.message;
-    }
+  function setStatus(msg, cls="alert alert-info"){
+    statusBox.className="status " + cls;
+    statusBox.innerText=msg;
   }
 
-  function captureFrame() {
-    if (!video || video.readyState < 2) return null;
+  async function startCamera(){
+    stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user" }, audio:false });
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r);
+  }
 
-    const width  = video.videoWidth  || 640;
-    const height = video.videoHeight || 480;
-
-    canvas.width  = width;
-    canvas.height = height;
-
+  function snapDataURL(){
+    const w = video.videoWidth || 640;
+    const h = video.videoHeight || 480;
+    canvas.width=w; canvas.height=h;
     const ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0, width, height);
+    ctx.drawImage(video,0,0,w,h);
     return canvas.toDataURL("image/png");
   }
 
-  async function captureAndSendFace() {
-    if (!stream) {
-      statusBox.className = "alert alert-warning big-message";
-      statusBox.textContent = "Hãy bật camera trước khi chụp.";
-      return;
-    }
-
-    const dataUrl = captureFrame();
-    if (!dataUrl) {
-      statusBox.className = "alert alert-warning big-message";
-      statusBox.textContent = "Không lấy được khung hình, thử lại.";
-      return;
-    }
-
-    const faceResult = document.querySelector('input[name="faceResult"]:checked').value;
-    const faceOk = (faceResult === "ok");
-    const backupCode = (backupCodeEl.value || "").trim() || null;
-
-    statusBox.className = "alert alert-info big-message";
-    statusBox.textContent = "Đang gửi ảnh khuôn mặt lên server...";
-
-    try {
+  async function sendFace(backupCode=null){
+    if (busy || stopped) return;
+    busy=true;
+    try{
+      const payload = {
+        resident_id: residentId,
+        plate_text: plateText,
+        mode: mode,
+        face_image: snapDataURL(),
+        backup_code: backupCode
+      };
       const resp = await fetch("/gate/face/capture", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          resident_id: residentId,
-          plate_text: plateText,
-          mode: mode,
-          face_image: dataUrl,
-          scene_image: null,
-          face_ok: faceOk,
-          backup_code: backupCode
-        })
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
       });
-
       const data = await resp.json();
-      debugBox.textContent = JSON.stringify(data, null, 2);
 
-      if (data.ok) {
-        // Xác thực thành công -> cho xe qua & tạm biệt
-        statusBox.className = "alert alert-success big-message";
-        statusBox.textContent =
-          data.message ||
-          "Cư dân đã được xác thực, barie mở. Xin chúc quý khách thượng lộ bình an!";
-
-        // Có thể dừng camera cho đẹp
-        if (stream) {
-          stream.getTracks().forEach(t => t.stop());
-          stream = null;
-        }
-      } else {
-        // Cần nhập / nhập sai mã 6 số
-        attemptCount += 1;
-
-        let msg = data.message || "Không xác thực được khuôn mặt.";
-        if (data.need_backup_code) {
-          msg += " Vui lòng nhập đúng mã 6 số cư dân.";
-        }
-
-        if (attemptCount >= MAX_ATTEMPTS) {
-          msg = "Sai quá 3 lần trong thời gian ngắn – hệ thống đã cảnh báo. "
-              + "Vui lòng nhập đúng mã dự phòng hoặc liên hệ bảo vệ.";
-        }
-
-        statusBox.className = "alert alert-warning big-message";
-        statusBox.textContent = msg;
+      if (data && data.ok && data.redirect_url){
+        stopped=true;
+        window.location.href = data.redirect_url;
+        return;
       }
-    } catch (err) {
-      console.error(err);
-      statusBox.className = "alert alert-danger big-message";
-      statusBox.textContent = "Lỗi khi gửi dữ liệu: " + err.message;
+
+      if (data && data.need_backup_code){
+        setStatus(data.message || "Không xác thực được. Nhập mã 6 số.", "alert alert-warning");
+        codeBox.classList.add("show");
+        setTimeout(()=>backupInput.focus(), 50);
+        return;
+      }
+
+      if (data && data.ok === false && data.message){
+        setStatus(data.message, "alert alert-warning");
+      }
+    }catch(e){
+      console.log(e);
+      setStatus("Lỗi kết nối. Thử lại.", "alert alert-danger");
+    }finally{
+      busy=false;
     }
   }
 
-  btnStart.addEventListener("click", startCamera);
-  btnCapture.addEventListener("click", captureAndSendFace);
-})();
+  async function main(){
+    try{
+      await startCamera();
+      setStatus("Đang xác thực khuôn mặt…", "alert alert-info");
+      // auto loop: tự chụp liên tục
+      setInterval(()=>sendFace(null), 1200);
+    }catch(e){
+      setStatus("Không mở được camera. Vui lòng cấp quyền.", "alert alert-danger");
+    }
+  }
+
+  btnSend.addEventListener("click", ()=>{
+    const code = (backupInput.value||"").trim();
+    if (!code) return;
+    sendFace(code);
+  });
+  backupInput.addEventListener("keydown", (e)=>{
+    if (e.key === "Enter"){
+      e.preventDefault();
+      btnSend.click();
+    }
+  });
+
+  main();
 </script>
 {% endblock %}

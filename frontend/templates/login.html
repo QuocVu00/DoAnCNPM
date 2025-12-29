@@ -1,95 +1,134 @@
-{% extends "base.html" %}
-{% block title %}Đăng nhập hệ thống Smart Parking{% endblock %}
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Đăng nhập hệ thống Smart Parking</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-{% block head %}
-<style>
-  .login-page-wrapper {
-    min-height: calc(100vh - 80px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .login-card {
-    border: none;
-    border-radius: 1.5rem;
-    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.08);
-    overflow: hidden;
-  }
-  .login-header {
-    background: linear-gradient(135deg, #2563eb, #22c55e);
-    color: #fff;
-    padding: 1.5rem 1.75rem;
-  }
-  .login-header h3 {
-    margin: 0;
-    font-weight: 600;
-  }
-  .login-subtitle {
-    font-size: 0.9rem;
-    opacity: 0.9;
-  }
-</style>
-{% endblock %}
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 
-{% block content %}
-<div class="login-page-wrapper">
-  <div class="col-md-5 col-lg-4">
-    <div class="card login-card">
-      <div class="login-header">
+    <style>
+        body {
+            min-height: 100vh;
+            background: linear-gradient(135deg, #eef2f7, #dfe7f3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: "Segoe UI", sans-serif;
+        }
+
+        .login-card {
+            width: 100%;
+            max-width: 420px;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.12);
+            overflow: hidden;
+        }
+
+        .login-header {
+            background: linear-gradient(135deg, #2563eb, #10b981);
+            color: #fff;
+            padding: 28px 24px;
+            text-align: center;
+        }
+
+        .login-header h3 {
+            margin: 0;
+            font-weight: 700;
+        }
+
+        .login-header p {
+            margin: 6px 0 0;
+            font-size: 14px;
+            opacity: 0.95;
+        }
+
+        .login-body {
+            padding: 28px 26px 30px;
+        }
+
+        .form-label {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 6px;
+        }
+
+        .form-control {
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 15px;
+        }
+
+        .form-control:focus {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 0.15rem rgba(37, 99, 235, 0.25);
+        }
+
+        .btn-login {
+            margin-top: 12px;
+            background: linear-gradient(135deg, #2563eb, #10b981);
+            border: none;
+            border-radius: 12px;
+            padding: 11px;
+            font-weight: 600;
+            font-size: 16px;
+            color: #fff;
+            transition: all 0.25s ease;
+        }
+
+        .btn-login:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(16,185,129,0.35);
+        }
+
+        .footer-text {
+            margin-top: 18px;
+            font-size: 13px;
+            color: #6b7280;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div class="login-card">
+    <div class="login-header">
         <h3>Smart Parking</h3>
-        <div class="login-subtitle">
-          Hệ thống bãi giữ xe chung cư 10 tầng
-        </div>
-      </div>
+        <p>Hệ thống bãi giữ xe chung cư</p>
+    </div>
 
-      <div class="card-body p-4">
-
-        {# Hiển thị các thông báo từ flash() trong app.py #}
-        {% with messages = get_flashed_messages(with_categories=True) %}
-          {% if messages %}
-            {% for category, message in messages %}
-              {% set bs_class =
-                'danger' if category in ['error', 'danger'] else
-                'warning' if category == 'warning' else
-                'success' if category == 'success' else
-                'info'
-              %}
-              <div class="alert alert-{{ bs_class }} mb-3">
-                {{ message }}
-              </div>
-            {% endfor %}
-          {% endif %}
+    <div class="login-body">
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <div class="alert alert-danger text-center">
+                {{ messages[0] }}
+            </div>
+        {% endif %}
         {% endwith %}
 
-        <form method="post" action="{{ url_for('login') }}">
-          <div class="mb-3">
-            <label class="form-label">Tên đăng nhập</label>
-            <input
-              type="text"
-              name="username"
-              class="form-control"
-              placeholder="Nhập tên đăng nhập..."
-              required
-            />
-          </div>
+        <form method="post">
+            <div class="mb-3">
+                <label class="form-label">Tên đăng nhập</label>
+                <input type="text" name="username" class="form-control" placeholder="Nhập tên đăng nhập..." required>
+            </div>
 
-          <div class="mb-3">
-            <label class="form-label">Mật khẩu</label>
-            <input
-              type="password"
-              name="password"
-              class="form-control"
-              placeholder="Nhập mật khẩu..."
-              required
-            />
-          </div>
+            <div class="mb-3">
+                <label class="form-label">Mật khẩu</label>
+                <input type="password" name="password" class="form-control" placeholder="Nhập mật khẩu..." required>
+            </div>
 
-          <button class="btn btn-primary w-100 mt-2" type="submit">
-            Đăng nhập
-          </button>
+            <button type="submit" class="btn btn-login w-100">
+                Đăng nhập
+            </button>
         </form>
-      </div>
+
+        <div class="footer-text">
+            © 2025 Smart Parking System
+        </div>
     </div>
-  </div>
 </div>
-{% endblock %}
+
+</body>
+</html>

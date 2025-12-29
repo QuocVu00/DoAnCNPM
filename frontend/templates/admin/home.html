@@ -42,6 +42,11 @@
     gap:.5rem;
     font-weight:600;
   }
+  .gate-actions{
+    display:flex;
+    align-items:center;
+    gap:.5rem;
+  }
   </style>
 {% endblock %}
 
@@ -54,17 +59,14 @@
 </div>
 
 <div class="row g-3 mb-4">
-  <!-- 1. TỔNG SỐ CƯ DÂN (click -> DS cư dân) -->
+  <!-- 1. TỔNG SỐ CƯ DÂN -->
   <div class="col-md-4">
-    <!-- SỬA Ở ĐÂY: admin_residents_list -->
     <a href="{{ url_for('admin_residents_list') }}" class="stat-card-link">
       <div class="card stat-card h-100">
         <div class="card-body d-flex align-items-center justify-content-between">
           <div>
             <div class="stat-label">Tổng số cư dân</div>
-            <div class="stat-value text-primary">
-              {{ stats.total_residents }}
-            </div>
+            <div class="stat-value text-primary">{{ stats.total_residents }}</div>
           </div>
           <div class="stat-icon text-primary">👥</div>
         </div>
@@ -79,9 +81,7 @@
         <div class="card-body d-flex align-items-center justify-content-between">
           <div>
             <div class="stat-label">Khách ngoài hôm nay</div>
-            <div class="stat-value text-success">
-              {{ stats.total_guests_today }}
-            </div>
+            <div class="stat-value text-success">{{ stats.total_guests_today }}</div>
           </div>
           <div class="stat-icon text-success">🚗</div>
         </div>
@@ -96,14 +96,54 @@
         <div class="card-body d-flex align-items-center justify-content-between">
           <div>
             <div class="stat-label">Xe đang ở bãi</div>
-            <div class="stat-value text-warning">
-              {{ stats.active_vehicles }}
-            </div>
+            <div class="stat-value text-warning">{{ stats.active_vehicles }}</div>
           </div>
           <div class="stat-icon text-warning">🅿️</div>
         </div>
       </div>
     </a>
+  </div>
+</div>
+
+<!-- =========================
+      TRẠM CỔNG (STATUS + UNLOCK)
+     ========================= -->
+<div class="card mb-3">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <div class="fw-semibold">🚧 Trạm cổng</div>
+
+    <div class="gate-actions">
+      <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()">Làm mới</button>
+
+      {% if gate_locked %}
+        <button id="btnUnlockGate" class="btn btn-sm btn-danger">
+          🔓 Mở khóa
+        </button>
+      {% else %}
+        <span class="badge bg-success">Đang hoạt động</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card-body">
+    {% if gate_locked %}
+      <div class="alert alert-danger mb-0">
+        <div class="fw-bold">TRẠM ĐANG BỊ KHÓA</div>
+        {% if gate_lock_info and gate_lock_info.locked_reason %}
+          <div class="mt-1">{{ gate_lock_info.locked_reason }}</div>
+        {% endif %}
+        {% if gate_lock_info and gate_lock_info.locked_at %}
+          <div class="text-muted mt-1">Khóa lúc: {{ gate_lock_info.locked_at }}</div>
+        {% endif %}
+        <div class="mt-2">
+          Nhấn <b>Mở khóa</b> để cho trạm hoạt động lại ngay.
+        </div>
+      </div>
+    {% else %}
+      <div class="alert alert-success mb-0">
+        <span class="me-2">🟢</span><b>TRẠM ĐANG HOẠT ĐỘNG BÌNH THƯỜNG</b>
+      </div>
+    {% endif %}
   </div>
 </div>
 
@@ -169,9 +209,7 @@ new Chart(document.getElementById('revenueChart'), {
   options: {
     responsive: true,
     plugins: { legend: { display: true } },
-    scales: {
-      y: { beginAtZero: true }
-    }
+    scales: { y: { beginAtZero: true } }
   }
 });
 
@@ -194,10 +232,32 @@ new Chart(document.getElementById('trafficChart'), {
   options: {
     responsive: true,
     plugins: { legend: { display: true } },
-    scales: {
-      y: { beginAtZero: true }
-    }
+    scales: { y: { beginAtZero: true } }
   }
 });
+
+// ========= UNLOCK BUTTON =========
+const btnUnlock = document.getElementById("btnUnlockGate");
+if (btnUnlock){
+  btnUnlock.addEventListener("click", async () => {
+    btnUnlock.disabled = true;
+    btnUnlock.innerText = "Đang mở khóa...";
+
+    try{
+      const resp = await fetch("/admin/gate/unlock", { method: "POST" });
+      const data = await resp.json();
+      if (data && data.ok){
+        location.reload();
+        return;
+      }
+      alert((data && data.message) || "Mở khóa thất bại.");
+    }catch(e){
+      alert("Không gọi được server. Kiểm tra backend đang chạy.");
+    }finally{
+      btnUnlock.disabled = false;
+      btnUnlock.innerText = "🔓 Mở khóa";
+    }
+  });
+}
 </script>
 {% endblock %}

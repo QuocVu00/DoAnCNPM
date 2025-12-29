@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Thông báo{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+  .box{max-width:720px;margin:0 auto;text-align:center}
+  .cardx{
+    border-radius:18px;padding:26px;color:#fff;
+    box-shadow:0 20px 40px rgba(0,0,0,.12)
+  }
+  .welcome{background:linear-gradient(135deg,#2563eb,#10b981)}
+  .goodbye{background:linear-gradient(135deg,#0ea5e9,#22c55e)}
+  .big{font-size:30px;font-weight:900;margin:0}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container py-5 box">
+  {% if kind == "welcome" %}
+    <div class="cardx welcome">
+      <p class="big">Chào mừng bạn quay về</p>
+      <div class="opacity-90 mt-2">Xe cư dân đã được cho vào bãi.</div>
+    </div>
+  {% else %}
+    <div class="cardx goodbye">
+      <p class="big">Mong bạn sớm quay về</p>
+      <div class="opacity-90 mt-2">Xác thực thành công. Xe được phép ra.</div>
+    </div>
+  {% endif %}
+
+  <div class="alert alert-info mt-3">
+    Tự quay về màn hình quét biển số sau <b>5 giây</b>.
+  </div>
+</div>
+
+<script>
+  setTimeout(()=>{ window.location.href="/gate/plate"; }, 5000);
+</script>
+{% endblock %}

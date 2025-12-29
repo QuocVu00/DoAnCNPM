@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Nhập mã vé để ra{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+  .box{max-width:720px;margin:0 auto}
+  .hero{
+    background: linear-gradient(135deg,#111827,#ef4444);
+    color:#fff;border-radius:16px;padding:22px;text-align:center
+  }
+  .plate{font-size:22px;font-weight:800}
+</style>
+{% endblock %}
+
+{% block content %}
+{# ✅ tương thích cả biến cũ gate_locked và biến mới is_locked #}
+{% set locked = (gate_locked if gate_locked is defined else false) or (is_locked if is_locked is defined else false) %}
+{% set attempts = attempt_count if attempt_count is defined else None %}
+{% set maxfails = max_fails if max_fails is defined else 3 %}
+{% set until = locked_until if locked_until is defined else None %}
+
+<div class="container py-4 box">
+  <div class="hero">
+    <h2 class="fw-bold mb-1">NHẬP MÃ VÉ ĐỂ XE RA</h2>
+    <div class="plate">Biển số: {{ plate }}</div>
+  </div>
+
+  {% if locked %}
+  <div class="alert alert-danger mt-3">
+    <div class="fw-bold">Bạn đã bị khóa do nhập sai quá {{ maxfails }} lần.</div>
+    {% if until %}
+      <div>Khóa đến: {{ until }}</div>
+    {% else %}
+      <div>Vui lòng liên hệ Admin để mở khóa.</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div id="msg" class="alert alert-info mt-3">
+    Nhập mã 6 số rồi nhấn Enter.
+    {% if attempts is not none %}
+      (Đã sai: {{ attempts }}/{{ maxfails }})
+    {% endif %}
+  </div>
+
+  <div class="card shadow-sm mt-2">
+    <div class="card-body">
+      <div class="d-flex gap-2">
+        <input
+          id="code"
+          class="form-control"
+          placeholder="Nhập 6 số..."
+          inputmode="numeric"
+          maxlength="6"
+          {% if locked %}disabled{% endif %}
+        >
+        <button id="btn" class="btn btn-primary" {% if locked %}disabled{% endif %}>
+          Xác nhận
+        </button>
+      </div>
+
+      <div class="text-muted mt-2">
+        Bạn chỉ được nhập sai tối đa {{ maxfails }} lần.
+        {% if attempts is not none %}
+          (Còn {{ maxfails - attempts if (maxfails - attempts) > 0 else 0 }} lần)
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const plate = "{{ plate }}";
+  const sessionId = "{{ session_id }}";
+  const inp = document.getElementById("code");
+  const btn = document.getElementById("btn");
+  const msg = document.getElementById("msg");
+
+  function setMsg(text, cls="alert alert-info"){
+    msg.className = "alert mt-3 " + cls;
+    msg.innerText = text;
+  }
+
+  setTimeout(()=>{ if(!inp.disabled) inp.focus(); }, 50);
+
+  async function submit(){
+    const code = (inp.value||"").trim();
+    if (!code){
+      setMsg("Vui lòng nhập mã vé.", "alert alert-warning");
+      inp.focus();
+      return;
+    }
+    if (code.length !== 6 || !/^\d{6}$/.test(code)){
+      setMsg("Mã vé phải gồm đúng 6 chữ số.", "alert alert-warning");
+      inp.select();
+      inp.focus();
+      return;
+    }
+
+    let resp, data;
+    try{
+      resp = await fetch("/gate/guest/verify", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ plate: plate, session_id: sessionId, ticket_code: code })
+      });
+      data = await resp.json();
+    }catch(e){
+      setMsg("Không gọi được server. Kiểm tra backend đang chạy.", "alert alert-danger");
+      return;
+    }
+
+    // ✅ đúng mã -> redirect
+    if (data && data.ok && data.redirect_url){
+      window.location.href = data.redirect_url;
+      return;
+    }
+
+    // ✅ bị khóa (server trả về)
+    if (data && (data.locked === true || data.is_locked === true)){
+      inp.disabled = true;
+      btn.disabled = true;
+      setMsg(data.message || "Bạn đã bị khóa. Liên hệ Admin.", "alert alert-danger");
+      return;
+    }
+
+    // ✅ còn số lần thử (server trả remaining)
+    if (data && data.remaining !== undefined){
+      const rem = Number(data.remaining);
+      if (!isNaN(rem) && rem <= 0){
+        inp.disabled = true;
+        btn.disabled = true;
+        setMsg(data.message || "Bạn đã bị khóa do nhập sai quá số lần.", "alert alert-danger");
+        return;
+      }
+      setMsg(data.message || ("Sai mã. Còn " + data.remaining + " lần."), "alert alert-warning");
+      inp.select();
+      inp.focus();
+      return;
+    }
+
+    // fallback
+    setMsg((data && data.message) || "Có lỗi xảy ra.", "alert alert-danger");
+  }
+
+  btn.addEventListener("click", submit);
+  inp.addEventListener("keydown", (e)=>{
+    if (e.key === "Enter"){
+      e.preventDefault();
+      submit();
+    }
+  });
+</script>
+{% endblock %}

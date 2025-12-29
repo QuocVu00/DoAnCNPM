@@ -1,20 +1,8 @@
 # frontend/ai/plate_recognition.py
-
 from __future__ import annotations
 
 import re
 from typing import Optional, List, Tuple
-
-# Import an toàn: nếu thiếu lib thì trả None để app không crash
-try:
-    import easyocr
-    import cv2
-    import numpy as np
-except Exception:
-    easyocr = None
-    cv2 = None
-    np = None
-
 
 # =========================================================
 # Regex biển số VN (khá linh hoạt, đủ dùng cho demo)
@@ -39,11 +27,32 @@ _OCR_FIX_MAP = str.maketrans({
     "B": "8",
 })
 
+_reader = None  # cache EasyOCR Reader
 
-_reader = None
+
+def _lazy_import_libs():
+    """
+    Import thư viện NẶNG theo kiểu lazy để app.py không bị treo lúc khởi động.
+    Trả về (easyocr, cv2, np) hoặc (None, None, None) nếu không import được.
+    """
+    try:
+        import cv2  # type: ignore
+        import numpy as np  # type: ignore
+    except Exception as e:
+        print("[WARN] Không import được OpenCV/Numpy:", e)
+        return None, None, None
+
+    # EasyOCR kéo torch => import chậm, chỉ làm khi thật sự OCR
+    try:
+        import easyocr  # type: ignore
+    except Exception as e:
+        print("[WARN] Không import được EasyOCR:", e)
+        return None, cv2, np
+
+    return easyocr, cv2, np
 
 
-def _ensure_reader():
+def _ensure_reader(easyocr):
     """Khởi tạo EasyOCR reader 1 lần."""
     global _reader
     if easyocr is None:
@@ -64,8 +73,8 @@ def _normalize_raw_text(text: str) -> str:
     if not text:
         return ""
     t = text.upper().strip()
-    t = re.sub(r"[^A-Z0-9]", "", t)          # bỏ dấu cách, dấu -, ...
-    t = t.translate(_OCR_FIX_MAP)           # sửa nhầm phổ biến
+    t = re.sub(r"[^A-Z0-9]", "", t)      # bỏ dấu cách, dấu -, ...
+    t = t.translate(_OCR_FIX_MAP)        # sửa nhầm phổ biến
     return t
 
 
@@ -80,10 +89,9 @@ def _extract_plate(normalized: str) -> Optional[str]:
             return m.group(0)
 
     # fallback: đôi khi OCR dính liền nhiều ký tự -> thử quét mọi cửa sổ độ dài 7..10
-    # (vì biển số thường nằm khoảng đó)
     for L in range(10, 6, -1):
         for i in range(0, max(0, len(normalized) - L + 1)):
-            chunk = normalized[i:i+L]
+            chunk = normalized[i:i + L]
             for pat in PLATE_PATTERNS:
                 if pat.fullmatch(chunk):
                     return chunk
@@ -91,7 +99,7 @@ def _extract_plate(normalized: str) -> Optional[str]:
     return None
 
 
-def _decode_bytes_to_bgr(image_bytes: bytes):
+def _decode_bytes_to_bgr(cv2, np, image_bytes: bytes):
     """Decode bytes PNG/JPG -> ảnh BGR (OpenCV)."""
     if cv2 is None or np is None:
         return None
@@ -102,7 +110,7 @@ def _decode_bytes_to_bgr(image_bytes: bytes):
     return img
 
 
-def _preprocess_variants(img_bgr) -> List:
+def _preprocess_variants(cv2, img_bgr) -> List:
     """
     Tạo vài biến thể ảnh để OCR dễ đọc hơn:
     - ảnh gốc
@@ -113,12 +121,10 @@ def _preprocess_variants(img_bgr) -> List:
         return [img_bgr]
 
     variants = [img_bgr]
-
     try:
         gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
         variants.append(gray)
 
-        # làm mượt nhẹ rồi threshold
         blur = cv2.GaussianBlur(gray, (3, 3), 0)
         _, th1 = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         variants.append(th1)
@@ -136,28 +142,35 @@ def _preprocess_variants(img_bgr) -> List:
 
 def read_plate_from_image(image_bytes: bytes) -> Optional[str]:
     """
-    Hàm app.py đang gọi:
+    Hàm app.py gọi:
         plate_text = read_plate_from_image(img_bytes)
 
     Input: bytes (ảnh PNG/JPG)
     Output: string biển số (VD: '59AB95454') hoặc None
+
+    ✅ Lazy import: chỉ khi gọi hàm này mới import EasyOCR/torch.
     """
-    if easyocr is None or cv2 is None or np is None:
-        print("[WARN] EasyOCR/OpenCV/Numpy chưa cài -> không thể OCR biển số.")
+    easyocr, cv2, np = _lazy_import_libs()
+
+    if cv2 is None or np is None:
+        print("[WARN] OpenCV/Numpy chưa sẵn sàng -> không thể OCR biển số.")
         return None
 
-    img = _decode_bytes_to_bgr(image_bytes)
+    if easyocr is None:
+        print("[WARN] EasyOCR chưa cài/không import được -> không thể OCR biển số.")
+        return None
+
+    img = _decode_bytes_to_bgr(cv2, np, image_bytes)
     if img is None:
         print("[WARN] Không decode được bytes ảnh.")
         return None
 
-    reader = _ensure_reader()
+    reader = _ensure_reader(easyocr)
     if reader is None:
         print("[WARN] Không init được EasyOCR reader.")
         return None
 
-    # OCR trên nhiều biến thể ảnh, lấy cái ra được plate trước
-    variants = _preprocess_variants(img)
+    variants = _preprocess_variants(cv2, img)
 
     # Dùng detail=1 để có confidence; ưu tiên chuỗi có conf cao
     best: Tuple[float, Optional[str]] = (0.0, None)
@@ -169,7 +182,6 @@ def read_plate_from_image(image_bytes: bytes) -> Optional[str]:
             print(f"[WARN] OCR error variant#{idx}:", e)
             continue
 
-        # results: List[(bbox, text, conf)]
         raw_texts = []
         for item in results:
             if len(item) >= 3:
@@ -183,17 +195,14 @@ def read_plate_from_image(image_bytes: bytes) -> Optional[str]:
 
             norm = _normalize_raw_text(text)
             plate = _extract_plate(norm)
-            if plate:
-                if conf > best[0]:
-                    best = (conf, plate)
+            if plate and conf > best[0]:
+                best = (conf, plate)
 
-        # debug
         print(f"[DEBUG OCR variant#{idx}] raw_texts =", raw_texts)
-        if best[1]:
-            # nếu đã có biển số conf khá, có thể return sớm
-            if best[0] >= 0.35:
-                print("[INFO] Plate found (early):", best[1], "conf=", best[0])
-                return best[1]
+
+        if best[1] and best[0] >= 0.35:
+            print("[INFO] Plate found (early):", best[1], "conf=", best[0])
+            return best[1]
 
         # fallback: ghép tất cả text lại rồi thử extract
         joined = _normalize_raw_text("".join(raw_texts))
@@ -207,4 +216,3 @@ def read_plate_from_image(image_bytes: bytes) -> Optional[str]:
 
     print("[INFO] No valid plate found from OCR after normalization.")
     return None
-    
