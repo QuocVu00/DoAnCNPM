@@ -40,10 +40,9 @@
 
           <!-- ĐỔI TÊN "Cư dân" -> "DS cư dân" -->
           <a href="{{ url_for('admin_residents_list') }}"
-            class="btn btn-sm btn-outline-light">
+             class="btn btn-sm btn-outline-light">
             DS cư dân
           </a>
-
 
           <a href="{{ url_for('admin_guests') }}"
              class="btn btn-sm btn-outline-light">
@@ -62,10 +61,7 @@
 
         {% elif role == 'resident' %}
           <span class="badge bg-success">Cư dân</span>
-          <a href="{{ url_for('resident_dashboard') }}"
-             class="btn btn-sm btn-outline-light">
-            Trang cư dân
-          </a>
+          <!-- ĐÃ BỎ NÚT "Trang cư dân" THEO YÊU CẦU -->
           <button
             class="btn btn-sm btn-outline-info"
             type="button"

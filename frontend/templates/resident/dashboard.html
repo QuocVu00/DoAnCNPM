@@ -4,17 +4,14 @@
 {% block head %}
   {{ super() }}
   <style>
-    /* Khi bật chat: thu nội dung lại bằng padding-right,
-       chừa chỗ cho panel chat + 1 ít khoảng trống */
     .resident-main.with-chat {
-      padding-right: 380px;  /* 360px panel + ~20px khoảng cách */
+      padding-right: 380px;
       transition: padding-right 0.2s ease-in-out;
     }
 
-    /* Panel chat cố định bên phải, dưới thanh menu */
     #residentChatPanel {
       position: fixed;
-      top: 56px; /* chiều cao navbar ~56px */
+      top: 56px;
       right: 0;
       width: 360px;
       height: calc(100vh - 56px);
@@ -22,7 +19,7 @@
       box-shadow: -4px 0 12px rgba(15, 23, 42, 0.18);
       border-left: 1px solid #e5e7eb;
       display: none;
-      z-index: 1040; /* trên nội dung, dưới navbar */
+      z-index: 1040;
     }
 
     #residentChatPanel.show {
@@ -30,85 +27,161 @@
       flex-direction: column;
     }
 
-    /* Avatar cư dân */
+    /* Avatar cư dân: ưu tiên ảnh, nếu không có thì hiện chữ cái */
     .resident-avatar {
-      width: 48px;
-      height: 48px;
+      width: 56px;
+      height: 56px;
       border-radius: 50%;
-      background: #0d6efd;
+      background: linear-gradient(135deg, #0d6efd, #22c55e);
       color: #ffffff;
       display: flex;
       align-items: center;
       justify-content: center;
+      font-weight: 700;
+      font-size: 22px;
+      box-shadow: 0 4px 10px rgba(15, 23, 42, 0.25);
+      overflow: hidden;
+    }
+
+    .resident-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .resident-subtitle {
+      color: #6b7280;
+      font-size: 0.9rem;
+    }
+
+    .card {
+      border-radius: 0.75rem;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 4px 10px rgba(15, 23, 42, 0.04);
+    }
+
+    .card-header {
       font-weight: 600;
-      font-size: 20px;
-      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.25);
+      background: #f9fafb;
+      border-bottom: 1px solid #e5e7eb;
     }
   </style>
 {% endblock %}
 
 {% block content %}
 
-<!-- Avatar + lời chào theo thời gian -->
-<div class="d-flex align-items-center gap-3 mb-3">
-  <div class="resident-avatar">
-    {{ avatar_letter }}
-  </div>
-  <h3 class="mb-0">
-    {{ greeting }}, {{ resident.full_name }}
-  </h3>
-</div>
+<div class="resident-main">
 
-<div class="row mb-3">
-  <!-- Thông tin chung -->
-  <div class="col-md-6 mb-3">
-    <div class="card h-100">
-      <div class="card-header">Thông tin chung</div>
-      <div class="card-body">
-        <p><b>Căn hộ:</b> Tầng {{ resident.floor }}, phòng {{ resident.room }}</p>
-        <p><b>Biển số xe:</b> {{ resident.plate_number }}</p>
-        <p>
-          <b>Trạng thái xe:</b>
-          {% if resident.is_in_parking %}
-            <span class="text-success">Đang ở bãi</span>
-          {% else %}
-            <span class="text-muted">Không ở bãi</span>
-          {% endif %}
-        </p>
+  <!-- Avatar + lời chào theo thời gian -->
+  <div class="d-flex align-items-center gap-3 mb-3">
+    <div class="resident-avatar">
+      {% if avatar_url %}
+        <img src="{{ avatar_url }}" alt="Ảnh cư dân">
+      {% else %}
+        {{ resident.full_name[:1]|upper }}
+      {% endif %}
+    </div>
+    <div>
+      <h4 class="mb-1">
+        Xin chào {{ greeting_time }} cư dân {{ resident.full_name }}
+      </h4>
+      <div class="resident-subtitle">
+        Căn hộ: Tầng {{ resident.floor }}, phòng {{ resident.room }}
       </div>
     </div>
   </div>
 
-  <!-- Lịch sử ra/vào -->
-  <div class="col-md-6 mb-3">
-    <div class="card h-100">
-      <div class="card-header">Lịch sử ra/vào gần đây</div>
-      <div class="card-body p-0">
-        <table class="table mb-0">
-          <thead>
-            <tr>
-              <th>Thời gian</th>
-              <th>Loại</th>
-              <th>Biển số</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for log in logs %}
-            <tr>
-              <td>{{ log.timestamp }}</td>
-              <td>{{ log.event_type }}</td>
-              <td>{{ log.plate_number }}</td>
-            </tr>
-            {% else %}
-            <tr>
-              <td colspan="3" class="text-center text-muted">Chưa có dữ liệu</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+  <div class="row mb-3">
+    <!-- Thông tin chung -->
+    <div class="col-md-6 mb-3">
+      <div class="card h-100">
+        <div class="card-header">Thông tin chung</div>
+        <div class="card-body">
+          <p class="mb-2">
+            <b>Căn hộ:</b>
+            <span class="ms-1">Tầng {{ resident.floor }}, phòng {{ resident.room }}</span>
+          </p>
+          <p class="mb-2">
+            <b>Biển số xe:</b>
+            <span class="ms-1">
+              {% if primary_plate %}
+                {{ primary_plate }}
+              {% else %}
+                <span class="text-muted">Chưa cập nhật</span>
+              {% endif %}
+            </span>
+          </p>
+          <p class="mb-2">
+            <b>Mã dự phòng:</b>
+            <span class="ms-1">
+              {% if backup_code %}
+                {{ backup_code }}
+              {% else %}
+                <span class="text-muted">Chưa được cấp</span>
+              {% endif %}
+            </span>
+          </p>
+          <p class="mb-0">
+            <b>Trạng thái xe:</b>
+            <span class="ms-1">
+              {% if vehicles and vehicles[0].is_in_parking %}
+                <span class="text-success">Đang ở bãi</span>
+              {% else %}
+                <span class="text-muted">Không ở bãi</span>
+              {% endif %}
+            </span>
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lịch sử ra/vào -->
+    <div class="col-md-6 mb-3">
+      <div class="card h-100">
+        <div class="card-header">Lịch sử ra/vào gần đây</div>
+        <div class="card-body p-0">
+          <table class="table mb-0 table-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th style="width: 40%;">Thời gian</th>
+                <th style="width: 30%;">Loại</th>
+                <th style="width: 30%;">Biển số</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for log in logs %}
+              <tr>
+                <td>{{ log.event_time }}</td>
+                <td>
+                  {% if log.event_type == 'resident_in' %}
+                    Vào (cư dân)
+                  {% elif log.event_type == 'resident_out' %}
+                    Ra (cư dân)
+                  {% elif log.event_type == 'guest_in' %}
+                    Vào (khách)
+                  {% elif log.event_type == 'guest_out' %}
+                    Ra (khách)
+                  {% else %}
+                    {{ log.event_type }}
+                  {% endif %}
+                </td>
+                <td>{{ log.plate }}</td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="3" class="text-center text-muted py-3">
+                  Chưa có dữ liệu
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
+
 </div>
 
 {# ====== PANEL CHAT CỐ ĐỊNH BÊN PHẢI ====== #}
@@ -163,7 +236,7 @@
       <div class="mb-2">
         <label class="form-label">Nội dung tin nhắn</label>
         <textarea
-          name="content"
+          name="message"
           rows="2"
           class="form-control"
           placeholder="Nhập tin nhắn gửi cho admin..."

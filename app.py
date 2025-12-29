@@ -64,13 +64,14 @@ def require_role(*roles):
 
 
 # =========================================================
-#  DB: TABLE PHỤ CHO NOTIFICATION + ĐẾM NHẬP SAI MÃ VÉ + LOCK TRẠM
+#  DB: TABLE PHỤ CHO NOTIFICATION + ĐẾM NHẬP SAI MÃ VÉ + LOCK TRẠM + CHAT
 # =========================================================
 def ensure_support_tables():
     """
     - admin_notifications: lưu thông báo hệ thống cho admin
     - guest_ticket_attempts: đếm số lần nhập sai mã vé theo guest_session_id
     - gate_locks: trạng thái khóa trạm (1 dòng duy nhất)
+    - resident_messages: lịch sử chat cư dân <-> admin
     """
     try:
         execute(
@@ -123,6 +124,23 @@ def ensure_support_tables():
     except Exception as e:
         print("[WARN] ensure gate_locks failed:", e)
 
+    # Bảng lưu lịch sử chat cư dân
+    try:
+        execute(
+            """
+            CREATE TABLE IF NOT EXISTS resident_messages (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                resident_id INT NOT NULL,
+                sender ENUM('resident','admin') NOT NULL DEFAULT 'resident',
+                content TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_resident_created (resident_id, created_at)
+            )
+            """
+        )
+    except Exception as e:
+        print("[WARN] ensure resident_messages failed:", e)
+
 
 ensure_support_tables()
 
@@ -151,7 +169,9 @@ def _get_gate_lock_id():
 
 def get_gate_lock_row():
     try:
-        return query_one("SELECT id, is_locked, locked_reason, locked_at, unlocked_at FROM gate_locks ORDER BY id ASC LIMIT 1")
+        return query_one(
+            "SELECT id, is_locked, locked_reason, locked_at, unlocked_at FROM gate_locks ORDER BY id ASC LIMIT 1"
+        )
     except Exception as e:
         print("[WARN] get_gate_lock_row:", e)
         return None
@@ -312,6 +332,7 @@ def resident_dashboard():
     if not resident_id:
         return redirect(url_for("login"))
 
+    # Thông tin cơ bản cư dân
     resident = query_one(
         """
         SELECT id, full_name, floor, room, phone, status
@@ -325,6 +346,7 @@ def resident_dashboard():
         flash("Không tìm thấy thông tin cư dân.", "danger")
         return redirect(url_for("login"))
 
+    # Xe của cư dân
     vehicles = query_all(
         """
         SELECT id, plate, is_in_parking
@@ -334,6 +356,7 @@ def resident_dashboard():
         (resident_id,),
     )
 
+    # Lịch sử ra/vào
     logs = query_all(
         """
         SELECT event_time, event_type, plate
@@ -345,11 +368,93 @@ def resident_dashboard():
         (resident_id,),
     )
 
+    # ====== 1) Câu chào theo thời gian (buổi sáng/chiều/tối) ======
+    now = datetime.now()
+    h = now.hour
+    if 5 <= h < 12:
+        greeting_time = "buổi sáng"
+    elif 12 <= h < 18:
+        greeting_time = "buổi chiều"
+    else:
+        greeting_time = "buổi tối"
+
+    # ====== 2) Biển số chính ======
+    primary_plate = ""
+    if vehicles:
+        first_plate = vehicles[0].get("plate") or ""
+        primary_plate = first_plate.strip().upper()
+
+    # ====== 3) Mã dự phòng đang active ======
+    backup_code = ""
+    try:
+        bc_row = query_one(
+            """
+            SELECT backup_code
+            FROM resident_backup_codes
+            WHERE resident_id=%s AND is_active=1
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (resident_id,),
+        )
+        if bc_row and bc_row.get("backup_code"):
+            backup_code = bc_row["backup_code"]
+    except Exception as e:
+        print("[WARN] resident_dashboard backup_code:", e)
+
+    # ====== 4) Ảnh hồ sơ (face_image nếu có) ======
+    avatar_url = None
+    try:
+        face_row = query_one(
+            "SELECT face_image FROM residents WHERE id=%s LIMIT 1",
+            (resident_id,),
+        )
+        face_path = face_row.get("face_image") if face_row else None
+        if face_path:
+            rel = str(face_path).replace("\\", "/").lstrip("/")
+            avatar_url = url_for("static", filename=rel)
+    except Exception as e:
+        print("[WARN] resident_dashboard avatar face_image:", e)
+
+    # ====== 5) Lịch sử chat cư dân <-> admin ======
+    messages = []
+    try:
+        rows = query_all(
+            """
+            SELECT sender, content, created_at
+            FROM resident_messages
+            WHERE resident_id=%s
+            ORDER BY id ASC
+            LIMIT 100
+            """,
+            (resident_id,),
+        ) or []
+        for r in rows:
+            created_at = r.get("created_at")
+            if isinstance(created_at, datetime):
+                time_str = created_at.strftime("%H:%M %d/%m")
+            else:
+                time_str = str(created_at) if created_at else ""
+            messages.append(
+                {
+                    "sender": r.get("sender") or "resident",
+                    "content": r.get("content") or "",
+                    "time": time_str,
+                }
+            )
+    except Exception as e:
+        print("[WARN] resident_dashboard messages:", e)
+
     return render_template(
         "resident/dashboard.html",
         resident=resident,
         vehicles=vehicles,
         logs=logs,
+        greeting_time=greeting_time,
+        primary_plate=primary_plate,
+        backup_code=backup_code,
+        avatar_url=avatar_url,
+        messages=messages,
     )
 
 
@@ -367,6 +472,19 @@ def resident_chat_send():
     resident = query_one("SELECT full_name FROM residents WHERE id=%s", (resident_id,))
     sender_name = resident["full_name"] if resident else "Cư dân"
 
+    # Lưu lịch sử chat
+    try:
+        execute(
+            """
+            INSERT INTO resident_messages(resident_id, sender, content, created_at)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (resident_id, "resident", message, datetime.now()),
+        )
+    except Exception as e:
+        print("[WARN] resident_chat_send insert message failed:", e)
+
+    # Thông báo cho admin trên dashboard
     add_admin_notification(
         "info",
         f"Tin nhắn cư dân: {sender_name}",
@@ -374,7 +492,7 @@ def resident_chat_send():
     )
 
     flash("Đã gửi tin nhắn tới ban quản trị.", "success")
-    return redirect(url_for("resident_dashboard"))
+    return redirect(url_for("resident_dashboard", chat=1))
 
 
 # =========================================================
@@ -652,6 +770,7 @@ def admin_delete_resident_real(resident_id):
         ("DELETE FROM resident_backup_codes WHERE resident_id=%s", (resident_id,)),
         ("DELETE FROM resident_vehicles WHERE resident_id=%s", (resident_id,)),
         ("DELETE FROM gate_captures WHERE resident_id=%s", (resident_id,)),
+        ("DELETE FROM resident_messages WHERE resident_id=%s", (resident_id,)),
     ]:
         try:
             execute(sql, params)
@@ -715,7 +834,7 @@ def admin_residents_list():
 
 
 # =========================================================
-#                 ADMIN: KHÁCH NGOÀI + BÁO CÁO + XE ĐANG Ở BÃI
+#                 ADMIN: KHÁCH NGOÀI + BÁO CÁO
 # =========================================================
 @app.route("/admin/guests")
 def admin_guests():
@@ -838,6 +957,9 @@ def admin_report_page():
     )
 
 
+# =========================================================
+#                 ADMIN: XE ĐANG Ở BÃI
+# =========================================================
 @app.route("/admin/active-vehicles")
 def admin_active_vehicles():
     """Trang 'Xe đang ở bãi'."""
@@ -923,11 +1045,97 @@ def admin_active_vehicles():
     return render_template("admin/active_vehicles.html", vehicles=vehicles)
 
 
+# =========================================================
+#                 ADMIN CHAT
+# =========================================================
 @app.route("/admin/chat")
 def admin_chat():
     if not require_role("admin", "staff"):
         return redirect(url_for("login"))
-    return render_template("admin/chat.html")
+
+    # Danh sách cư dân bên cột trái
+    residents = query_all(
+        """
+        SELECT id, full_name, floor, room
+        FROM residents
+        ORDER BY CAST(floor AS UNSIGNED), CAST(room AS UNSIGNED), full_name
+        """
+    ) or []
+
+    selected_resident = None
+    messages = []
+    resident_id = request.args.get("resident_id", type=int)
+
+    if resident_id:
+        selected_resident = query_one(
+            """
+            SELECT id, full_name, floor, room
+            FROM residents
+            WHERE id=%s
+            """,
+            (resident_id,),
+        )
+
+        if selected_resident:
+            try:
+                rows = query_all(
+                    """
+                    SELECT sender, content, created_at
+                    FROM resident_messages
+                    WHERE resident_id=%s
+                    ORDER BY id ASC
+                    LIMIT 200
+                    """,
+                    (resident_id,),
+                ) or []
+                for r in rows:
+                    created_at = r.get("created_at")
+                    if isinstance(created_at, datetime):
+                        time_str = created_at.strftime("%H:%M %d/%m")
+                    else:
+                        time_str = str(created_at) if created_at else ""
+                    messages.append(
+                        {
+                            "sender": r.get("sender") or "resident",
+                            "content": r.get("content") or "",
+                            "time": time_str,
+                        }
+                    )
+            except Exception as e:
+                print("[WARN] admin_chat messages:", e)
+
+    return render_template(
+        "admin/chat.html",
+        residents=residents,
+        selected_resident=selected_resident,
+        messages=messages,
+    )
+
+
+@app.route("/admin/chat/send", methods=["POST"])
+def admin_chat_send():
+    if not require_role("admin", "staff"):
+        return redirect(url_for("login"))
+
+    resident_id = request.form.get("resident_id", type=int)
+    content = (request.form.get("message") or "").strip()
+
+    if not resident_id or not content:
+        flash("Thiếu cư dân hoặc nội dung tin nhắn.", "warning")
+        return redirect(url_for("admin_chat"))
+
+    try:
+        execute(
+            """
+            INSERT INTO resident_messages(resident_id, sender, content, created_at)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (resident_id, "admin", content, datetime.now()),
+        )
+    except Exception as e:
+        print("[WARN] admin_chat_send failed:", e)
+
+    return redirect(url_for("admin_chat", resident_id=resident_id))
 
 
 # =========================================================
@@ -950,7 +1158,6 @@ def gate_face():
     mode = request.args.get("mode", "AUTO").upper()
 
     ref_face_image = None
-    # cột face_image có thể không tồn tại -> không crash
     if resident_id:
         try:
             row = query_one("SELECT face_image FROM residents WHERE id=%s LIMIT 1", (resident_id,))
@@ -995,11 +1202,11 @@ def normalize_plate(text: str) -> str:
         return ""
     return (
         text.replace(" ", "")
-            .replace("-", "")
-            .replace(".", "")
-            .replace("_", "")
-            .upper()
-            .strip()
+        .replace("-", "")
+        .replace(".", "")
+        .replace("_", "")
+        .upper()
+        .strip()
     )
 
 
@@ -1025,15 +1232,12 @@ def gate_capture():
             if not val:
                 return None
 
-            # 1) đã là bytes
             if isinstance(val, (bytes, bytearray)):
                 return bytes(val)
 
-            # 2) string
             if isinstance(val, str):
                 s = val.strip()
 
-                # 2.1 dataURL
                 if s.startswith("data:image"):
                     try:
                         _, b64 = s.split(",", 1)
@@ -1042,15 +1246,12 @@ def gate_capture():
                         print("[WARN] decode dataURL failed:", e)
                         return None
 
-                # 2.2 base64 trần (không có header)
-                # heuristic: dài + không có dấu \ hoặc :// + chỉ base64 chars
                 if len(s) > 100 and ("\\\\" not in s) and ("://" not in s) and ("/" not in s[:10]):
                     try:
                         return base64.b64decode(s)
                     except Exception:
                         pass
 
-                # 2.3 là path file (absolute hoặc relative)
                 try:
                     p = Path(s)
                     if p.exists():
@@ -1058,7 +1259,6 @@ def gate_capture():
                 except Exception:
                     pass
 
-                # 2.4 là relative path trong uploads (vd: plates/plate_...png)
                 try:
                     p2 = (GATE_UPLOAD_DIR / s).resolve()
                     if p2.exists():
@@ -1076,24 +1276,22 @@ def gate_capture():
 
         if not plate_text:
             if not img_bytes:
-                # log để biết frontend gửi gì
-                print("[DEBUG] plate_image type:", type(plate_image), "len:", (len(plate_image) if isinstance(plate_image, str) else "N/A"))
+                print("[DEBUG] plate_image type:", type(plate_image), "len:",
+                      (len(plate_image) if isinstance(plate_image, str) else "N/A"))
                 return jsonify({"ok": False, "message": "Không nhận được ảnh biển số từ camera."}), 200
 
             try:
-                # ✅ QUAN TRỌNG: OCR NHẬN BYTES
                 plate_text = (read_plate_from_image(img_bytes) or "").strip().upper()
             except Exception as e:
                 print("[WARN] OCR read_plate_from_image failed:", e)
                 plate_text = ""
 
-        # ====== 3) NORMALIZE BIỂN SỐ ======
         plate_text = (
             plate_text.replace(" ", "")
-                      .replace("-", "")
-                      .replace(".", "")
-                      .replace("_", "")
-                      .upper()
+            .replace("-", "")
+            .replace(".", "")
+            .replace("_", "")
+            .upper()
         )
 
         print("[DEBUG] gate_capture plate_text =", plate_text)
@@ -1129,7 +1327,11 @@ def gate_capture():
                     """,
                     (now, resident_id, plate_text),
                 )
-                return jsonify({"ok": True, "action": "redirect", "redirect_url": url_for("gate_message", kind="welcome")}), 200
+                return jsonify({
+                    "ok": True,
+                    "action": "redirect",
+                    "redirect_url": url_for("gate_message", kind="welcome")
+                }), 200
 
             return jsonify({
                 "ok": True,
@@ -1192,6 +1394,7 @@ def gate_capture():
         print("[ERROR] gate_capture:", e)
         return jsonify({"ok": False, "message": "Lỗi hệ thống."}), 500
 
+
 # =========================================================
 #  API GATE: BƯỚC 2 – XỬ LÝ KHUÔN MẶT CƯ DÂN (gate_face)
 # =========================================================
@@ -1209,7 +1412,6 @@ def gate_face_capture():
         if not resident_id:
             return jsonify({"ok": False, "message": "Thiếu resident_id."}), 400
 
-        # ref face: cột có thể không tồn tại -> không crash
         ref_face_path = None
         try:
             row = query_one("SELECT face_image FROM residents WHERE id=%s LIMIT 1", (resident_id,))
@@ -1248,7 +1450,6 @@ def gate_face_capture():
             except Exception as e:
                 print("[WARN] face verify error:", e)
 
-        # nếu ok -> cho ra
         if face_ok:
             now = datetime.now()
             execute(
@@ -1264,7 +1465,6 @@ def gate_face_capture():
             )
             return jsonify({"ok": True, "redirect_url": url_for("gate_message", kind="goodbye")}), 200
 
-        # không ok -> cần backup
         if not backup_code:
             return jsonify({
                 "ok": False,
@@ -1277,7 +1477,8 @@ def gate_face_capture():
             SELECT id
             FROM resident_backup_codes
             WHERE resident_id=%s AND backup_code=%s AND is_active=1
-            ORDER BY id DESC LIMIT 1
+            ORDER BY id DESC
+            LIMIT 1
             """,
             (resident_id, backup_code),
         )
@@ -1311,7 +1512,6 @@ def gate_face_capture():
 # =========================================================
 #  Admin mở khóa trạm
 # =========================================================
-
 @app.route("/admin/gate/status", methods=["GET"])
 def admin_gate_status():
     if session.get("role") != "admin":
@@ -1334,10 +1534,8 @@ def admin_gate_unlock():
     if session.get("role") != "admin":
         return jsonify({"ok": False, "message": "Unauthorized"}), 401
 
-    # 1) mở khóa trạm
     gate_unlock()
 
-    # 2) ✅ reset toàn bộ session đang bị lock (để trang nhập vé gõ lại được ngay)
     try:
         execute("""
             UPDATE guest_ticket_attempts
@@ -1374,6 +1572,7 @@ def gate_ticket_info():
 MAX_TICKET_FAILS = 3
 LOCK_MINUTES = 10  # khóa 10 phút
 
+
 @app.route("/gate/ticket", methods=["GET"])
 def gate_ticket():
     plate = (request.args.get("plate") or "").strip().upper()
@@ -1383,10 +1582,8 @@ def gate_ticket():
         flash("Thiếu session_id.", "danger")
         return redirect(url_for("gate_plate"))
 
-    # ✅ chỉ khóa theo gate_locks (admin mở là nhập lại được ngay)
     gate_locked = gate_is_locked()
 
-    # lấy attempts để hiển thị “còn mấy lần” (không dùng để disable nữa)
     attempt_count = 0
     locked_until = None
     try:
@@ -1414,7 +1611,6 @@ def gate_ticket():
 # =========================================================
 #  API xác nhận mã vé khi ra (3 lần sai -> khóa + notify admin)
 # =========================================================
-
 @app.route("/gate/guest/verify", methods=["POST"])
 def gate_guest_verify():
     data = request.get_json(silent=True) or {}
@@ -1431,7 +1627,6 @@ def gate_guest_verify():
     now = datetime.now()
 
     try:
-        # ✅ nếu trạm đang bị khóa toàn hệ thống
         if gate_is_locked():
             return jsonify({
                 "ok": False,
@@ -1439,7 +1634,6 @@ def gate_guest_verify():
                 "message": "Trạm đang bị khóa. Vui lòng liên hệ Admin để mở khóa."
             }), 200
 
-        # attempts row
         att = query_one(
             "SELECT attempt_count, locked_until FROM guest_ticket_attempts WHERE guest_session_id=%s",
             (session_id,)
@@ -1447,27 +1641,28 @@ def gate_guest_verify():
 
         if not att:
             execute(
-                "INSERT INTO guest_ticket_attempts (guest_session_id, attempt_count, locked_until, updated_at) VALUES (%s,0,NULL,%s)",
+                "INSERT INTO guest_ticket_attempts (guest_session_id, attempt_count, locked_until, updated_at) "
+                "VALUES (%s,0,NULL,%s)",
                 (session_id, now)
             )
             att = {"attempt_count": 0, "locked_until": None}
 
         attempt_count = int(att.get("attempt_count") or 0)
 
-        # ✅ IMPORTANT: không chặn theo locked_until nữa (vì admin unlock là nhập lại ngay)
-        # nếu bạn vẫn muốn chặn theo locked_until thì bỏ comment phần này và dùng logic cũ.
-
-        gs = query_one("SELECT id, plate, ticket_code, status, checkin_time FROM guest_sessions WHERE id=%s", (session_id,))
+        gs = query_one(
+            "SELECT id, plate, ticket_code, status, checkin_time FROM guest_sessions WHERE id=%s",
+            (session_id,)
+        )
         if not gs:
             return jsonify({"ok": False, "message": "Không tìm thấy phiên gửi xe khách."}), 404
 
         real_code = str(gs.get("ticket_code") or "").strip()
         real_plate = (gs.get("plate") or plate or "").strip().upper()
 
-        # đúng mã
         if real_code and ticket_code == real_code:
             execute(
-                "UPDATE guest_ticket_attempts SET attempt_count=0, locked_until=NULL, updated_at=%s WHERE guest_session_id=%s",
+                "UPDATE guest_ticket_attempts SET attempt_count=0, locked_until=NULL, updated_at=%s "
+                "WHERE guest_session_id=%s",
                 (now, session_id)
             )
 
@@ -1498,15 +1693,16 @@ def gate_guest_verify():
                 "redirect_url": url_for("gate_message", kind="goodbye")
             }), 200
 
-        # sai mã
         attempt_count += 1
 
         if attempt_count >= MAX_TICKET_FAILS:
-            # khóa trạm toàn hệ thống
-            gate_lock(f"Khóa trạm do nhập sai mã vé {MAX_TICKET_FAILS} lần. Plate: {real_plate} Session: {session_id}")
+            gate_lock(
+                f"Khóa trạm do nhập sai mã vé {MAX_TICKET_FAILS} lần. Plate: {real_plate} Session: {session_id}"
+            )
 
             execute(
-                "UPDATE guest_ticket_attempts SET attempt_count=%s, locked_until=%s, updated_at=%s WHERE guest_session_id=%s",
+                "UPDATE guest_ticket_attempts SET attempt_count=%s, locked_until=%s, updated_at=%s "
+                "WHERE guest_session_id=%s",
                 (attempt_count, now + timedelta(minutes=LOCK_MINUTES), now, session_id)
             )
 
@@ -1528,7 +1724,11 @@ def gate_guest_verify():
         )
 
         remaining = MAX_TICKET_FAILS - attempt_count
-        return jsonify({"ok": False, "message": f"Mã vé sai. Bạn còn {remaining} lần thử.", "remaining": remaining}), 200
+        return jsonify({
+            "ok": False,
+            "message": f"Mã vé sai. Bạn còn {remaining} lần thử.",
+            "remaining": remaining
+        }), 200
 
     except Exception as e:
         print("[ERROR] gate_guest_verify:", e)

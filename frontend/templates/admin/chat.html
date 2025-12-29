@@ -1,97 +1,152 @@
 {% extends "base.html" %}
 {% block title %}Trò chuyện với cư dân{% endblock %}
 
+{% block head %}
+  {{ super() }}
+  <style>
+    .chat-list-item {
+      cursor: pointer;
+      padding: 0.5rem 0.75rem;
+      border-radius: 0.5rem;
+      transition: background-color 0.15s ease-in-out;
+    }
+    .chat-list-item:hover {
+      background-color: #f3f4f6;
+    }
+    .chat-list-item.active {
+      background-color: #e5f0ff;
+    }
+
+    .chat-box {
+      height: 420px;
+      overflow-y: auto;
+      background-color: #f9fafb;
+      border-radius: 0.75rem;
+      border: 1px solid #e5e7eb;
+      padding: 0.75rem;
+    }
+
+    .msg-bubble {
+      max-width: 75%;
+      border-radius: 1rem;
+      padding: 0.5rem 0.75rem;
+      font-size: 0.9rem;
+    }
+  </style>
+{% endblock %}
+
 {% block content %}
 <h3 class="mb-3">Trò chuyện với cư dân</h3>
 
 <div class="row">
-  <!-- Danh sách cư dân -->
-  <div class="col-md-3 mb-3">
+  <!-- DANH SÁCH CƯ DÂN -->
+  <div class="col-md-4 mb-3">
     <div class="card h-100">
-      <div class="card-header">Danh sách cư dân</div>
-      <div class="list-group list-group-flush">
-        {% for r in residents %}
-        <a
-          href="{{ url_for('admin_chat', resident_id=r.id) }}"
-          class="list-group-item list-group-item-action {% if active_resident and active_resident.id == r.id %}active{% endif %}"
-        >
-          {{ r.full_name }}<br />
-          <small>Phòng {{ r.floor }}/{{ r.room }}</small>
-        </a>
-        {% endfor %}
+      <div class="card-header">
+        Danh sách cư dân
+      </div>
+      <div class="card-body">
+        {% if residents %}
+          {% for r in residents %}
+          <a
+            href="{{ url_for('admin_chat', resident_id=r.id) }}"
+            class="text-decoration-none text-dark d-block mb-1"
+          >
+            <div class="chat-list-item {% if selected_resident and selected_resident.id == r.id %}active{% endif %}">
+              <div class="fw-semibold">{{ r.full_name }}</div>
+              <div class="text-muted small">
+                Phòng {{ r.room }}/{{ r.floor }}
+              </div>
+            </div>
+          </a>
+          {% endfor %}
+        {% else %}
+          <div class="text-muted small">Chưa có cư dân nào.</div>
+        {% endif %}
       </div>
     </div>
   </div>
 
-  <!-- Khung chat -->
-  <div class="col-md-9 mb-3">
+  <!-- KHUNG CHAT -->
+  <div class="col-md-8 mb-3">
     <div class="card h-100">
       <div class="card-header">
-        {% if active_resident %}
-          Trò chuyện với: <b>{{ active_resident.full_name }}</b>
-          <span class="text-muted">
-            (Phòng {{ active_resident.floor }}/{{ active_resident.room }})
-          </span>
+        {% if selected_resident %}
+          Trò chuyện với:
+          <b>{{ selected_resident.full_name }}</b>
+          (Phòng {{ selected_resident.room }}/{{ selected_resident.floor }})
         {% else %}
           Chưa chọn cư dân
         {% endif %}
       </div>
-      {% if active_resident %}
-      <div class="card-body d-flex flex-column">
-        <div
-          class="border rounded mb-3 p-2 flex-grow-1"
-          style="max-height: 400px; overflow-y: auto; background-color: #f8fafc;"
-        >
-          {% if messages %}
-            {% for m in messages %}
-              {% if m.sender == 'resident' %}
-                <div class="d-flex justify-content-start mb-2">
-                  <div class="bg-white border rounded-3 px-3 py-2">
-                    <div class="small">{{ m.content }}</div>
-                    <div class="small text-muted" style="font-size: 0.75rem;">
-                      {{ active_resident.full_name }} • {{ m.time }}
-                    </div>
-                  </div>
-                </div>
-              {% else %}
-                <div class="d-flex justify-content-end mb-2">
-                  <div class="bg-primary text-white rounded-3 px-3 py-2">
-                    <div class="small">{{ m.content }}</div>
-                    <div class="small text-light text-end" style="font-size: 0.75rem;">
-                      Admin • {{ m.time }}
-                    </div>
-                  </div>
-                </div>
-              {% endif %}
-            {% endfor %}
-          {% else %}
-            <div class="text-muted text-center small py-3">
-              Chưa có tin nhắn nào với cư dân này.
-            </div>
-          {% endif %}
-        </div>
 
-        <form method="post" action="{{ url_for('admin_chat_send') }}">
-          <input type="hidden" name="resident_id" value="{{ active_resident.id }}" />
-          <div class="mb-2">
-            <label class="form-label">Nội dung tin nhắn</label>
-            <textarea
-              name="content"
-              rows="2"
-              class="form-control"
-              placeholder="Nhập tin nhắn gửi cho cư dân..."
-              required
-            ></textarea>
+      <div class="card-body d-flex flex-column">
+        {% if not selected_resident %}
+          <div class="text-muted text-center my-4">
+            Hãy chọn một cư dân ở bên trái để bắt đầu trò chuyện.
           </div>
-          <button class="btn btn-primary" type="submit">Gửi</button>
-        </form>
+        {% else %}
+          <!-- Lịch sử tin nhắn -->
+          <div id="adminChatBox" class="chat-box mb-3">
+            {% if messages %}
+              {% for m in messages %}
+                {% if m.sender == 'admin' %}
+                  <div class="d-flex justify-content-end mb-2">
+                    <div class="msg-bubble bg-primary text-white">
+                      <div>{{ m.content }}</div>
+                      <div class="small text-end" style="opacity: .8;">
+                        Bạn • {{ m.time }}
+                      </div>
+                    </div>
+                  </div>
+                {% else %}
+                  <div class="d-flex justify-content-start mb-2">
+                    <div class="msg-bubble bg-white border">
+                      <div>{{ m.content }}</div>
+                      <div class="small text-muted">
+                        Cư dân • {{ m.time }}
+                      </div>
+                    </div>
+                  </div>
+                {% endif %}
+              {% endfor %}
+            {% else %}
+              <div class="text-muted small text-center">
+                Chưa có tin nhắn nào với cư dân này.
+              </div>
+            {% endif %}
+          </div>
+
+          <!-- Form gửi tin -->
+          <form method="post" action="{{ url_for('admin_chat_send') }}">
+            <input type="hidden" name="resident_id" value="{{ selected_resident.id }}">
+            <div class="mb-2">
+              <label class="form-label">Nội dung tin nhắn</label>
+              <textarea
+                name="message"
+                class="form-control"
+                rows="2"
+                placeholder="Nhập tin nhắn gửi cho cư dân..."
+                required
+              ></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">
+              Gửi
+            </button>
+          </form>
+        {% endif %}
       </div>
-      {% else %}
-      <div class="card-body">
-        <div class="text-muted">Hãy chọn một cư dân ở bên trái để bắt đầu trò chuyện.</div>
-      </div>
-      {% endif %}
     </div>
   </div>
 </div>
+
+<script>
+  // Tự cuộn xuống cuối khung chat
+  (function() {
+    var box = document.getElementById("adminChatBox");
+    if (box) {
+      box.scrollTop = box.scrollHeight;
+    }
+  })();
+</script>
 {% endblock %}
